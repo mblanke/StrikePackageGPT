@@ -399,15 +399,15 @@ async def start_network_scan(request: NetworkScanRequest):
     total_hosts = calculate_target_hosts(request.target)
     
     # Build nmap command based on scan type
-    # Use --stats-every to get progress updates
+    # Use -T4 for faster timing, --stats-every for progress, --min-hostgroup for parallel scanning
     scan_commands = {
-        "ping": f"nmap -sn {request.target} -oX - --stats-every 2s",
-        "quick": f"nmap -T4 -F -O --osscan-limit {request.target} -oX - --stats-every 2s",
-        "os": f"nmap -O -sV --version-light {request.target} -oX - --stats-every 2s",
-        "full": f"nmap -sS -sV -O -p- --version-all {request.target} -oX - --stats-every 2s"
+        "ping": f"nmap -sn -T4 --min-hostgroup 64 {request.target} -oX - --stats-every 1s",
+        "quick": f"nmap -T4 -F --top-ports 100 --min-hostgroup 32 {request.target} -oX - --stats-every 1s",
+        "os": f"nmap -T4 -O --osscan-guess --max-os-tries 1 --min-hostgroup 16 {request.target} -oX - --stats-every 2s",
+        "full": f"nmap -T4 -sS -sV -O --version-light -p- --min-hostgroup 8 {request.target} -oX - --stats-every 2s"
     }
     
-    command = scan_commands.get(request.scan_type, scan_commands["os"])
+    command = scan_commands.get(request.scan_type, scan_commands["quick"])
     
     network_scans[scan_id] = {
         "scan_id": scan_id,

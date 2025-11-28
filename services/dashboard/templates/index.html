@@ -836,12 +836,12 @@
                     </div>
 
                     <div class="bg-sp-grey/50 p-3 rounded text-xs text-sp-white-muted">
-                        <p class="font-semibold text-sp-white mb-1">Scan Options:</p>
+                        <p class="font-semibold text-sp-white mb-1">⏱️ Estimated Times (per /24):</p>
                         <ul class="space-y-1">
-                            <li>• <strong>Ping Sweep:</strong> Fast host discovery only</li>
-                            <li>• <strong>Quick Scan:</strong> Top 100 ports with OS hints</li>
-                            <li>• <strong>OS Detection:</strong> Detailed OS fingerprinting</li>
-                            <li>• <strong>Full Scan:</strong> Complete port + OS (slower)</li>
+                            <li>• <strong class="text-green-400">Ping Sweep:</strong> ~10-30 seconds</li>
+                            <li>• <strong class="text-blue-400">Quick Scan:</strong> ~1-3 minutes (recommended)</li>
+                            <li>• <strong class="text-yellow-400">OS Detection:</strong> ~5-15 minutes</li>
+                            <li>• <strong class="text-red-400">Full Scan:</strong> ~30-60+ minutes</li>
                         </ul>
                     </div>
                 </div>
@@ -894,7 +894,7 @@
                 networkScanProgress: { current: 0, total: 0, currentIp: '', hostsFound: 0 },
                 showRangeScanModal: false,
                 rangeScanTarget: '',
-                rangeScanType: 'os',
+                rangeScanType: 'quick',
 
                 phases: [
                     {
