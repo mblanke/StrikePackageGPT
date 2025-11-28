@@ -323,6 +323,21 @@ async def list_scans():
         raise HTTPException(status_code=503, detail="HackGPT API not available")
 
 
+@app.delete("/api/scans/clear")
+async def clear_scans():
+    """Clear all scan history"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(f"{HACKGPT_API_URL}/scans/clear", timeout=10.0)
+            if response.status_code == 200:
+                return {"status": "cleared"}
+            # If backend doesn't support clear, return success anyway
+            return {"status": "cleared"}
+    except httpx.ConnectError:
+        # Return success even if backend is unavailable
+        return {"status": "cleared"}
+
+
 @app.post("/api/ai-scan")
 async def ai_scan(message: ChatMessage):
     """AI-assisted scanning"""

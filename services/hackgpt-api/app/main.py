@@ -721,6 +721,14 @@ async def list_scans():
     return list(scan_results.values())
 
 
+@app.delete("/scans/clear")
+async def clear_scans():
+    """Clear all scan history."""
+    global scan_results
+    scan_results = {}
+    return {"status": "cleared", "message": "All scan history cleared"}
+
+
 # ============== Output Parsing ==============
 
 def parse_tool_output(tool: str, output: str) -> Dict[str, Any]:

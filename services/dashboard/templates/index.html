@@ -164,6 +164,12 @@
                     🗺️ Network Map
                     <span x-show="networkHosts.length > 0" class="px-2 py-0.5 bg-sp-red/30 rounded-full text-xs" x-text="networkHosts.length"></span>
                 </button>
+                <button @click="activeTab = 'scan-history'" 
+                        :class="activeTab === 'scan-history' ? 'border-sp-red text-sp-red bg-sp-grey' : 'border-transparent text-sp-white-muted hover:text-white hover:bg-sp-grey-light'"
+                        class="px-4 py-2 font-medium transition border-b-2 flex items-center gap-2">
+                    📋 Scan History
+                    <span x-show="scans.length > 0" class="px-2 py-0.5 bg-sp-red/30 rounded-full text-xs" x-text="scans.length"></span>
+                </button>
             </div>
         </header>
 
@@ -583,6 +589,101 @@
                                         <span x-show="host.ports?.length" 
                                               class="text-xs bg-sp-grey px-2 py-0.5 rounded"
                                               x-text="host.ports.length + ' ports'"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Scan History Tab -->
+                <div x-show="activeTab === 'scan-history'" class="flex-1 flex flex-col">
+                    <div class="p-4 border-b border-sp-grey-mid flex justify-between items-center">
+                        <h2 class="text-lg font-bold text-sp-white flex items-center gap-2">
+                            📋 Scan History
+                            <span class="text-sm font-normal text-sp-white-muted">(<span x-text="scans.length"></span> scans)</span>
+                        </h2>
+                        <div class="flex gap-2">
+                            <button @click="refreshScans()" 
+                                    class="bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded text-sm transition flex items-center gap-2">
+                                🔄 Refresh
+                            </button>
+                            <button @click="clearScanHistory()" 
+                                    x-show="scans.length > 0"
+                                    class="bg-sp-grey hover:bg-red-900/50 px-4 py-2 rounded text-sm transition flex items-center gap-2 text-sp-white-muted hover:text-red-400">
+                                🗑️ Clear All
+                            </button>
+                        </div>
+                    </div>
+
+                    <div x-show="scans.length === 0" class="flex-1 flex items-center justify-center">
+                        <div class="text-center text-sp-white-muted">
+                            <p class="text-6xl mb-4">📋</p>
+                            <p class="text-lg">No scan history yet</p>
+                            <p class="text-sm mt-2">Run scans from the Phase Tools or Terminal to see them here</p>
+                        </div>
+                    </div>
+
+                    <div x-show="scans.length > 0" class="flex-1 overflow-auto p-4">
+                        <div class="space-y-3">
+                            <template x-for="scan in scans.slice().reverse()" :key="scan.scan_id">
+                                <div class="bg-sp-grey border border-sp-grey-mid rounded-lg overflow-hidden hover:border-sp-red/50 transition">
+                                    <div class="p-4">
+                                        <div class="flex items-center justify-between mb-3">
+                                            <div class="flex items-center gap-3">
+                                                <span :class="{
+                                                    'bg-yellow-500 animate-pulse': scan.status === 'running' || scan.status === 'pending',
+                                                    'bg-green-500': scan.status === 'completed',
+                                                    'bg-sp-red': scan.status === 'failed'
+                                                }" class="w-3 h-3 rounded-full"></span>
+                                                <span class="font-mono text-sp-red font-bold" x-text="scan.tool"></span>
+                                                <span class="text-sp-white-muted">→</span>
+                                                <span class="font-mono text-sp-white" x-text="scan.target"></span>
+                                            </div>
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-xs text-sp-white-muted" x-text="formatScanTime(scan.created_at)"></span>
+                                                <span :class="{
+                                                    'bg-yellow-500/20 text-yellow-400': scan.status === 'running' || scan.status === 'pending',
+                                                    'bg-green-500/20 text-green-400': scan.status === 'completed',
+                                                    'bg-red-500/20 text-red-400': scan.status === 'failed'
+                                                }" class="px-2 py-1 rounded text-xs font-semibold" x-text="scan.status"></span>
+                                            </div>
+                                        </div>
+
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <template x-if="scan.scan_type">
+                                                <span class="px-2 py-1 bg-sp-dark rounded text-xs text-sp-white-muted" x-text="scan.scan_type"></span>
+                                            </template>
+                                            <template x-if="scan.parsed?.ports?.length">
+                                                <span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs" 
+                                                      x-text="scan.parsed.ports.length + ' ports found'"></span>
+                                            </template>
+                                            <template x-if="scan.parsed?.findings?.length">
+                                                <span class="px-2 py-1 bg-sp-red/20 text-sp-red rounded text-xs" 
+                                                      x-text="scan.parsed.findings.length + ' findings'"></span>
+                                            </template>
+                                            <template x-if="scan.parsed?.hosts?.length">
+                                                <span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs" 
+                                                      x-text="scan.parsed.hosts.length + ' hosts'"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+
+                                    <div class="border-t border-sp-grey-mid px-4 py-2 bg-sp-dark flex gap-2">
+                                        <button @click="viewScanDetails(scan)" 
+                                                class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-xs transition">
+                                            👁️ View Details
+                                        </button>
+                                        <button @click="rescanTarget(scan)" 
+                                                class="flex-1 bg-sp-red hover:bg-sp-red-dark px-3 py-2 rounded text-xs transition"
+                                                :disabled="scan.status === 'running' || scan.status === 'pending'">
+                                            🔄 Rescan
+                                        </button>
+                                        <button @click="copyScanCommand(scan)" 
+                                                class="bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-xs transition"
+                                                title="Copy command to terminal">
+                                            📋
+                                        </button>
                                     </div>
                                 </div>
                             </template>
@@ -1155,6 +1256,79 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                 },
 
                 countBySeverity(severity) { return this.findings.filter(f => f.severity === severity).length; },
+
+                // Scan History helpers
+                formatScanTime(timestamp) {
+                    if (!timestamp) return 'Unknown';
+                    const date = new Date(timestamp);
+                    const now = new Date();
+                    const diff = now - date;
+                    
+                    if (diff < 60000) return 'Just now';
+                    if (diff < 3600000) return Math.floor(diff / 60000) + ' min ago';
+                    if (diff < 86400000) return Math.floor(diff / 3600000) + ' hours ago';
+                    if (diff < 604800000) return Math.floor(diff / 86400000) + ' days ago';
+                    
+                    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                },
+
+                async rescanTarget(scan) {
+                    this.scanModal = {
+                        tool: scan.tool,
+                        target: scan.target,
+                        scanType: scan.scan_type || 'default',
+                        types: this.getScanTypes(scan.tool)
+                    };
+                    this.scanModalOpen = true;
+                },
+
+                getScanTypes(tool) {
+                    const toolConfig = {
+                        nmap: ['quick', 'full', 'stealth', 'vuln', 'os'],
+                        nikto: ['default', 'ssl', 'full'],
+                        gobuster: ['dir', 'dns', 'vhost'],
+                        sqlmap: ['test', 'dbs', 'tables'],
+                        whatweb: ['default', 'aggressive'],
+                        amass: ['passive', 'active'],
+                        hydra: ['ssh', 'ftp', 'http'],
+                        masscan: ['quick', 'full']
+                    };
+                    return toolConfig[tool] || ['default'];
+                },
+
+                copyScanCommand(scan) {
+                    const commands = {
+                        nmap: `nmap -sV ${scan.target}`,
+                        nikto: `nikto -h ${scan.target}`,
+                        gobuster: `gobuster dir -u ${scan.target} -w /usr/share/wordlists/dirb/common.txt`,
+                        sqlmap: `sqlmap -u "${scan.target}" --batch`,
+                        whatweb: `whatweb ${scan.target}`,
+                        amass: `amass enum -d ${scan.target}`,
+                        hydra: `hydra -L users.txt -P passwords.txt ${scan.target} ssh`,
+                        masscan: `masscan ${scan.target} -p1-65535 --rate=1000`
+                    };
+                    const cmd = commands[scan.tool] || `${scan.tool} ${scan.target}`;
+                    navigator.clipboard.writeText(cmd);
+                    this.terminalInput = cmd;
+                    // Flash feedback
+                    this.messages.push({
+                        role: 'assistant',
+                        content: `📋 Command copied to clipboard and terminal:\n\`\`\`bash\n${cmd}\n\`\`\``
+                    });
+                },
+
+                async clearScanHistory() {
+                    if (!confirm('Clear all scan history? This cannot be undone.')) return;
+                    try {
+                        await fetch('/api/scans/clear', { method: 'DELETE' });
+                        this.scans = [];
+                        this.findings = [];
+                    } catch (e) { 
+                        console.error('Failed to clear scans:', e); 
+                        // Still clear locally if backend fails
+                        this.scans = [];
+                    }
+                },
 
                 // AI Provider display helpers
                 getProviderIcon(provider) {
