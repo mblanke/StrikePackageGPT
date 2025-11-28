@@ -500,9 +500,39 @@
                     </div>
 
                     <div x-show="networkMapLoading" class="flex-1 flex items-center justify-center">
-                        <div class="text-center text-sp-white-muted">
+                        <div class="text-center text-sp-white-muted w-96">
                             <div class="text-4xl mb-4 animate-spin">🔄</div>
-                            <p>Scanning network...</p>
+                            <p class="text-lg mb-4">Scanning network...</p>
+                            
+                            <!-- Progress Bar -->
+                            <div x-show="networkScanProgress.total > 0" class="mb-4">
+                                <div class="flex justify-between text-sm mb-1">
+                                    <span x-text="networkScanProgress.current + ' / ' + networkScanProgress.total"></span>
+                                    <span x-text="Math.round((networkScanProgress.current / networkScanProgress.total) * 100) + '%'"></span>
+                                </div>
+                                <div class="w-full bg-sp-grey rounded-full h-3 overflow-hidden">
+                                    <div class="bg-sp-red h-3 rounded-full transition-all duration-300"
+                                         :style="'width: ' + ((networkScanProgress.current / networkScanProgress.total) * 100) + '%'"></div>
+                                </div>
+                            </div>
+                            
+                            <!-- Current IP being scanned -->
+                            <div x-show="networkScanProgress.currentIp" class="text-sm">
+                                <p class="text-sp-white-muted">Currently scanning:</p>
+                                <p class="font-mono text-sp-red" x-text="networkScanProgress.currentIp"></p>
+                            </div>
+                            
+                            <!-- Live host count -->
+                            <div class="mt-4 flex justify-center gap-6">
+                                <div class="text-center">
+                                    <div class="text-2xl font-bold text-green-400" x-text="networkScanProgress.hostsFound || networkHosts.length"></div>
+                                    <div class="text-xs text-sp-white-muted">Hosts Found</div>
+                                </div>
+                                <div class="text-center" x-show="networkScanProgress.total > 0">
+                                    <div class="text-2xl font-bold text-sp-white" x-text="networkScanProgress.total - networkScanProgress.current"></div>
+                                    <div class="text-xs text-sp-white-muted">Remaining</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -861,6 +891,7 @@
                 networkHosts: [],
                 selectedHost: null,
                 networkMapLoading: false,
+                networkScanProgress: { current: 0, total: 0, currentIp: '', hostsFound: 0 },
                 showRangeScanModal: false,
                 rangeScanTarget: '',
                 rangeScanType: 'os',
@@ -1444,6 +1475,7 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                     if (!this.rangeScanTarget) return;
                     this.showRangeScanModal = false;
                     this.networkMapLoading = true;
+                    this.networkScanProgress = { current: 0, total: 0, currentIp: '', hostsFound: 0 };
                     this.activeTab = 'network-map';
                     
                     try {
@@ -1458,6 +1490,10 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                         const data = await response.json();
                         
                         if (data.scan_id) {
+                            // Set initial progress based on target range
+                            if (data.total_hosts) {
+                                this.networkScanProgress.total = data.total_hosts;
+                            }
                             // Poll for results
                             await this.pollNetworkScan(data.scan_id);
                         }
@@ -1470,24 +1506,35 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                         });
                     }
                     this.networkMapLoading = false;
+                    this.networkScanProgress = { current: 0, total: 0, currentIp: '', hostsFound: 0 };
                 },
 
                 async pollNetworkScan(scanId) {
                     const maxAttempts = 120; // 10 minutes max
                     for (let i = 0; i < maxAttempts; i++) {
-                        await new Promise(r => setTimeout(r, 5000));
+                        await new Promise(r => setTimeout(r, 2000)); // Poll every 2 seconds for better progress updates
                         try {
                             const response = await fetch(`/api/network/scan/${scanId}`);
                             const data = await response.json();
+                            
+                            // Update progress
+                            if (data.progress) {
+                                this.networkScanProgress = {
+                                    current: data.progress.scanned || 0,
+                                    total: data.progress.total || this.networkScanProgress.total,
+                                    currentIp: data.progress.current_ip || '',
+                                    hostsFound: data.progress.hosts_found || 0
+                                };
+                            }
                             
                             if (data.status === 'completed') {
                                 this.networkHosts = data.hosts || [];
                                 this.$nextTick(() => this.renderNetworkMap());
                                 return;
                             } else if (data.status === 'failed') {
-                                throw new Error('Scan failed');
+                                throw new Error(data.error || 'Scan failed');
                             }
-                            // Update partial results
+                            // Update partial results as hosts are discovered
                             if (data.hosts && data.hosts.length > 0) {
                                 this.networkHosts = data.hosts;
                                 this.$nextTick(() => this.renderNetworkMap());
