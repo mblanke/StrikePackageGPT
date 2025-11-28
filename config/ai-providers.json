@@ -1,0 +1,58 @@
+﻿{
+    "default_provider":  "ollama",
+    "load_balancing":  "round-robin",
+    "networked":  {
+                      "endpoints":  [
+                                        {
+                                            "url":  "http://192.168.1.50:11434",
+                                            "enabled":  true,
+                                            "ip":  "192.168.1.50",
+                                            "network_interface":  "high-speed",
+                                            "alt_url":  null,
+                                            "name":  "GB1",
+                                            "models":  [
+                                                           "qwen2.5-coder:32b",
+                                                           "llama3.1:70b",
+                                                           "deepseek-coder:33b",
+                                                           "deepseek-coder:6.7b",
+                                                           "llama3:latest",
+                                                           "llama3.1:70b-instruct-q5_K_M",
+                                                           "llama3.1:70b-instruct-q4_K_M",
+                                                           "mixtral:8x22b-instruct",
+                                                           "qwen2:72b-instruct"
+                                                       ],
+                                            "port":  11434,
+                                            "alt_ip":  "",
+                                            "priority":  1
+                                        }
+                                    ],
+                      "enabled":  true
+                  },
+    "local":  {
+                  "url":  "http://localhost:11434",
+                  "models":  [
+                                 "dolphin-mixtral:8x7b",
+                                 "qwen2.5:14b",
+                                 "deepseek-coder-v2:latest",
+                                 "codellama:13b",
+                                 "llama3.1:8b",
+                                 "llama3.2:latest",
+                                 "deepseek-coder:latest",
+                                 "mistral:latest",
+                                 "llama3:latest"
+                             ],
+                  "enabled":  true
+              },
+    "default_model":  "llama3.2",
+    "cloud":  {
+                  "openai":  {
+                                 "api_key":  "",
+                                 "enabled":  false
+                             },
+                  "anthropic":  {
+                                    "api_key":  "",
+                                    "enabled":  false
+                                },
+                  "enabled":  false
+              }
+}
