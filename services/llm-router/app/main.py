@@ -31,9 +31,13 @@ app.add_middleware(
 # Configuration from environment
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-# Support multiple Ollama endpoints (comma-separated)
-OLLAMA_ENDPOINTS_STR = os.getenv("OLLAMA_ENDPOINTS", os.getenv("OLLAMA_BASE_URL", "http://192.168.1.50:11434"))
-OLLAMA_ENDPOINTS = [url.strip() for url in OLLAMA_ENDPOINTS_STR.split(",") if url.strip()]
+
+# Separate local and networked Ollama endpoints
+OLLAMA_LOCAL_URL = os.getenv("OLLAMA_LOCAL_URL", "http://localhost:11434")
+OLLAMA_NETWORK_URLS_STR = os.getenv("OLLAMA_NETWORK_URLS", os.getenv("OLLAMA_ENDPOINTS", os.getenv("OLLAMA_BASE_URL", "")))
+OLLAMA_NETWORK_URLS = [url.strip() for url in OLLAMA_NETWORK_URLS_STR.split(",") if url.strip()]
+
+# Legacy support: if only OLLAMA_ENDPOINTS is set, use it for network
 LOAD_BALANCE_STRATEGY = os.getenv("LOAD_BALANCE_STRATEGY", "round-robin")  # round-robin, random, failover
 
 @dataclass
@@ -44,9 +48,10 @@ class EndpointHealth:
     failure_count: int = 0
     models: list = None
 
-# Track endpoint health
-endpoint_health: dict[str, EndpointHealth] = {url: EndpointHealth(url=url, models=[]) for url in OLLAMA_ENDPOINTS}
-current_endpoint_index = 0
+# Track endpoint health for both local and network
+all_ollama_endpoints = [OLLAMA_LOCAL_URL] + OLLAMA_NETWORK_URLS if OLLAMA_LOCAL_URL else OLLAMA_NETWORK_URLS
+endpoint_health: dict[str, EndpointHealth] = {url: EndpointHealth(url=url, models=[]) for url in all_ollama_endpoints}
+current_network_endpoint_index = 0
 
 
 class ChatMessage(BaseModel):
@@ -55,7 +60,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    provider: Literal["openai", "anthropic", "ollama"] = "ollama"
+    provider: Literal["openai", "anthropic", "ollama", "ollama-local", "ollama-network"] = "ollama-local"
     model: str = "llama3.2"
     messages: list[ChatMessage]
     temperature: float = 0.7
@@ -72,7 +77,12 @@ class ChatResponse(BaseModel):
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "service": "llm-router", "endpoints": len(OLLAMA_ENDPOINTS)}
+    return {
+        "status": "healthy", 
+        "service": "llm-router", 
+        "local_endpoint": OLLAMA_LOCAL_URL,
+        "network_endpoints": len(OLLAMA_NETWORK_URLS)
+    }
 
 
 async def check_endpoint_health(url: str) -> tuple[bool, list]:
@@ -89,13 +99,19 @@ async def check_endpoint_health(url: str) -> tuple[bool, list]:
     return False, []
 
 
-async def get_healthy_endpoint() -> Optional[str]:
-    """Get a healthy Ollama endpoint based on load balancing strategy"""
-    global current_endpoint_index
+async def get_healthy_endpoint(endpoints: list[str]) -> Optional[str]:
+    """Get a healthy Ollama endpoint from the given list based on load balancing strategy"""
+    global current_network_endpoint_index
+    
+    if not endpoints:
+        return None
     
     # Refresh health status for stale checks (older than 30 seconds)
     now = datetime.now()
-    for url, health in endpoint_health.items():
+    for url in endpoints:
+        if url not in endpoint_health:
+            endpoint_health[url] = EndpointHealth(url=url, models=[])
+        health = endpoint_health[url]
         if health.last_check is None or (now - health.last_check) > timedelta(seconds=30):
             is_healthy, models = await check_endpoint_health(url)
             health.healthy = is_healthy
@@ -104,7 +120,7 @@ async def get_healthy_endpoint() -> Optional[str]:
             if is_healthy:
                 health.failure_count = 0
     
-    healthy_endpoints = [url for url, h in endpoint_health.items() if h.healthy]
+    healthy_endpoints = [url for url in endpoints if endpoint_health.get(url, EndpointHealth(url=url)).healthy]
     
     if not healthy_endpoints:
         return None
@@ -116,9 +132,9 @@ async def get_healthy_endpoint() -> Optional[str]:
         return healthy_endpoints[0]
     else:  # round-robin (default)
         # Find next healthy endpoint in rotation
-        for _ in range(len(OLLAMA_ENDPOINTS)):
-            current_endpoint_index = (current_endpoint_index + 1) % len(OLLAMA_ENDPOINTS)
-            url = OLLAMA_ENDPOINTS[current_endpoint_index]
+        for _ in range(len(endpoints)):
+            current_network_endpoint_index = (current_network_endpoint_index + 1) % len(endpoints)
+            url = endpoints[current_network_endpoint_index]
             if url in healthy_endpoints:
                 return url
         return healthy_endpoints[0]
@@ -127,61 +143,105 @@ async def get_healthy_endpoint() -> Optional[str]:
 @app.get("/providers")
 async def list_providers():
     """List available LLM providers and their status"""
-    # Check all Ollama endpoints
-    ollama_info = []
-    all_models = set()
-    any_available = False
+    providers = {
+        "openai": {"available": bool(OPENAI_API_KEY), "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]},
+        "anthropic": {"available": bool(ANTHROPIC_API_KEY), "models": ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022"]},
+    }
     
-    for url in OLLAMA_ENDPOINTS:
+    # Check local Ollama endpoint
+    if OLLAMA_LOCAL_URL:
+        is_healthy, models = await check_endpoint_health(OLLAMA_LOCAL_URL)
+        endpoint_health[OLLAMA_LOCAL_URL] = EndpointHealth(
+            url=OLLAMA_LOCAL_URL, 
+            healthy=is_healthy, 
+            models=models,
+            last_check=datetime.now()
+        )
+        providers["ollama-local"] = {
+            "available": is_healthy,
+            "endpoint": OLLAMA_LOCAL_URL,
+            "models": models if models else ["llama3", "mistral", "codellama"]
+        }
+    else:
+        providers["ollama-local"] = {"available": False, "models": []}
+    
+    # Check networked Ollama endpoints
+    network_info = []
+    network_models = set()
+    any_network_available = False
+    
+    for url in OLLAMA_NETWORK_URLS:
         is_healthy, models = await check_endpoint_health(url)
-        endpoint_health[url].healthy = is_healthy
-        endpoint_health[url].models = models
-        endpoint_health[url].last_check = datetime.now()
-        
-        ollama_info.append({
+        endpoint_health[url] = EndpointHealth(
+            url=url,
+            healthy=is_healthy,
+            models=models,
+            last_check=datetime.now()
+        )
+        network_info.append({
             "url": url,
             "available": is_healthy,
             "models": models
         })
         if is_healthy:
-            any_available = True
-            all_models.update(models)
+            any_network_available = True
+            network_models.update(models)
     
-    providers = {
-        "openai": {"available": bool(OPENAI_API_KEY), "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]},
-        "anthropic": {"available": bool(ANTHROPIC_API_KEY), "models": ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022"]},
-        "ollama": {
-            "available": any_available, 
-            "endpoints": ollama_info,
-            "load_balance_strategy": LOAD_BALANCE_STRATEGY,
-            "models": list(all_models) if all_models else ["llama3", "mistral", "codellama"]
-        }
+    providers["ollama-network"] = {
+        "available": any_network_available,
+        "endpoints": network_info,
+        "load_balance_strategy": LOAD_BALANCE_STRATEGY,
+        "models": list(network_models) if network_models else ["llama3", "mistral", "codellama"]
     }
+    
+    # Legacy: also provide combined "ollama" for backward compatibility
+    all_ollama_models = set()
+    if providers["ollama-local"]["available"]:
+        all_ollama_models.update(providers["ollama-local"]["models"])
+    if providers["ollama-network"]["available"]:
+        all_ollama_models.update(providers["ollama-network"]["models"])
+    
+    providers["ollama"] = {
+        "available": providers["ollama-local"]["available"] or providers["ollama-network"]["available"],
+        "models": list(all_ollama_models) if all_ollama_models else ["llama3", "mistral", "codellama"]
+    }
+    
     return providers
 
 
 @app.get("/endpoints")
 async def list_endpoints():
     """List all Ollama endpoints with detailed status"""
-    results = []
-    for url in OLLAMA_ENDPOINTS:
+    results = {
+        "local": None,
+        "network": []
+    }
+    
+    # Local endpoint
+    if OLLAMA_LOCAL_URL:
+        is_healthy, models = await check_endpoint_health(OLLAMA_LOCAL_URL)
+        results["local"] = {
+            "url": OLLAMA_LOCAL_URL,
+            "healthy": is_healthy,
+            "models": models,
+            "failure_count": endpoint_health.get(OLLAMA_LOCAL_URL, EndpointHealth(url=OLLAMA_LOCAL_URL)).failure_count
+        }
+    
+    # Network endpoints
+    for url in OLLAMA_NETWORK_URLS:
         is_healthy, models = await check_endpoint_health(url)
-        endpoint_health[url].healthy = is_healthy
-        endpoint_health[url].models = models
-        endpoint_health[url].last_check = datetime.now()
-        
-        results.append({
+        results["network"].append({
             "url": url,
             "healthy": is_healthy,
             "models": models,
-            "failure_count": endpoint_health[url].failure_count
+            "failure_count": endpoint_health.get(url, EndpointHealth(url=url)).failure_count
         })
     
     return {
         "strategy": LOAD_BALANCE_STRATEGY,
         "endpoints": results,
-        "healthy_count": sum(1 for r in results if r["healthy"]),
-        "total_count": len(results)
+        "network_healthy_count": sum(1 for r in results["network"] if r["healthy"]),
+        "network_total_count": len(results["network"])
     }
 
 
@@ -193,8 +253,23 @@ async def chat(request: ChatRequest):
         return await _call_openai(request)
     elif request.provider == "anthropic":
         return await _call_anthropic(request)
+    elif request.provider == "ollama-local":
+        return await _call_ollama_local(request)
+    elif request.provider == "ollama-network":
+        return await _call_ollama_network(request)
     elif request.provider == "ollama":
-        return await _call_ollama(request)
+        # Legacy: try local first, then network
+        if OLLAMA_LOCAL_URL:
+            try:
+                return await _call_ollama_local(request)
+            except HTTPException:
+                if OLLAMA_NETWORK_URLS:
+                    return await _call_ollama_network(request)
+                raise
+        elif OLLAMA_NETWORK_URLS:
+            return await _call_ollama_network(request)
+        else:
+            raise HTTPException(status_code=503, detail="No Ollama endpoints configured")
     else:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {request.provider}")
 
@@ -279,13 +354,8 @@ async def _call_anthropic(request: ChatRequest) -> ChatResponse:
         )
 
 
-async def _call_ollama(request: ChatRequest) -> ChatResponse:
-    """Call Ollama API with load balancing across endpoints"""
-    endpoint = await get_healthy_endpoint()
-    
-    if not endpoint:
-        raise HTTPException(status_code=503, detail="No healthy Ollama endpoints available")
-    
+async def _call_ollama_endpoint(request: ChatRequest, endpoint: str, provider_label: str) -> ChatResponse:
+    """Call a specific Ollama endpoint"""
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
@@ -304,17 +374,19 @@ async def _call_ollama(request: ChatRequest) -> ChatResponse:
             
             if response.status_code != 200:
                 # Mark endpoint as failed
-                endpoint_health[endpoint].failure_count += 1
-                if endpoint_health[endpoint].failure_count >= 3:
-                    endpoint_health[endpoint].healthy = False
+                if endpoint in endpoint_health:
+                    endpoint_health[endpoint].failure_count += 1
+                    if endpoint_health[endpoint].failure_count >= 3:
+                        endpoint_health[endpoint].healthy = False
                 raise HTTPException(status_code=response.status_code, detail=response.text)
             
             # Reset failure count on success
-            endpoint_health[endpoint].failure_count = 0
+            if endpoint in endpoint_health:
+                endpoint_health[endpoint].failure_count = 0
             
             data = response.json()
             return ChatResponse(
-                provider="ollama",
+                provider=provider_label,
                 model=request.model,
                 content=data["message"]["content"],
                 usage={
@@ -325,16 +397,37 @@ async def _call_ollama(request: ChatRequest) -> ChatResponse:
             )
         except httpx.ConnectError:
             # Mark endpoint as unhealthy
-            endpoint_health[endpoint].healthy = False
-            endpoint_health[endpoint].failure_count += 1
-            
-            # Try another endpoint if available
-            other_endpoint = await get_healthy_endpoint()
-            if other_endpoint and other_endpoint != endpoint:
-                # Recursive call will use different endpoint
-                return await _call_ollama(request)
-            
-            raise HTTPException(status_code=503, detail="All Ollama endpoints unavailable")
+            if endpoint in endpoint_health:
+                endpoint_health[endpoint].healthy = False
+                endpoint_health[endpoint].failure_count += 1
+            raise HTTPException(status_code=503, detail=f"Ollama endpoint unavailable: {endpoint}")
+
+
+async def _call_ollama_local(request: ChatRequest) -> ChatResponse:
+    """Call local Ollama instance"""
+    if not OLLAMA_LOCAL_URL:
+        raise HTTPException(status_code=503, detail="Local Ollama not configured")
+    return await _call_ollama_endpoint(request, OLLAMA_LOCAL_URL, "ollama-local")
+
+
+async def _call_ollama_network(request: ChatRequest) -> ChatResponse:
+    """Call networked Ollama with load balancing across endpoints"""
+    if not OLLAMA_NETWORK_URLS:
+        raise HTTPException(status_code=503, detail="No networked Ollama endpoints configured")
+    
+    endpoint = await get_healthy_endpoint(OLLAMA_NETWORK_URLS)
+    
+    if not endpoint:
+        raise HTTPException(status_code=503, detail="No healthy networked Ollama endpoints available")
+    
+    try:
+        return await _call_ollama_endpoint(request, endpoint, "ollama-network")
+    except HTTPException:
+        # Try another endpoint if available
+        other_endpoint = await get_healthy_endpoint(OLLAMA_NETWORK_URLS)
+        if other_endpoint and other_endpoint != endpoint:
+            return await _call_ollama_endpoint(request, other_endpoint, "ollama-network")
+        raise
 
 
 if __name__ == "__main__":

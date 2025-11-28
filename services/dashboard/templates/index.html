@@ -106,7 +106,8 @@
                     </div>
                     <select x-model="selectedProvider" @change="updateModels()" 
                             class="bg-sp-grey border border-sp-grey-mid rounded px-3 py-1.5 text-sm text-sp-white focus:border-sp-red focus:outline-none">
-                        <option value="ollama">🦙 Ollama</option>
+                        <option value="ollama-local">🦙 Local Ollama</option>
+                        <option value="ollama-network">🌐 Networked Ollama</option>
                         <option value="openai">🤖 OpenAI</option>
                         <option value="anthropic">🧠 Anthropic</option>
                     </select>
@@ -738,7 +739,7 @@
                 userInput: '',
                 isLoading: false,
                 services: {},
-                selectedProvider: 'ollama',
+                selectedProvider: 'ollama-local',
                 selectedModel: 'llama3.2',
                 availableModels: ['llama3.2', 'codellama', 'mistral'],
                 providers: {},
@@ -1158,7 +1159,8 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                 // AI Provider display helpers
                 getProviderIcon(provider) {
                     const icons = {
-                        ollama: '🦙',
+                        'ollama-local': '🦙',
+                        'ollama-network': '🌐',
                         openai: '🤖',
                         anthropic: '🧠'
                     };
@@ -1167,7 +1169,8 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
 
                 getProviderName(provider) {
                     const names = {
-                        ollama: 'Ollama',
+                        'ollama-local': 'Local',
+                        'ollama-network': 'Networked',
                         openai: 'OpenAI',
                         anthropic: 'Anthropic'
                     };
@@ -1176,7 +1179,8 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
 
                 getProviderStyle(provider) {
                     const styles = {
-                        ollama: 'bg-yellow-500/20 border-yellow-500/50 text-yellow-400',
+                        'ollama-local': 'bg-yellow-500/20 border-yellow-500/50 text-yellow-400',
+                        'ollama-network': 'bg-blue-500/20 border-blue-500/50 text-blue-400',
                         openai: 'bg-green-500/20 border-green-500/50 text-green-400',
                         anthropic: 'bg-orange-500/20 border-orange-500/50 text-orange-400'
                     };
@@ -1185,7 +1189,8 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
 
                 getProviderBadgeStyle(provider) {
                     const styles = {
-                        ollama: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+                        'ollama-local': 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+                        'ollama-network': 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
                         openai: 'bg-green-500/20 text-green-400 border border-green-500/30',
                         anthropic: 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
                     };
