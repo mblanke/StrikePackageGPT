@@ -54,7 +54,7 @@ services:
       - strikepackage-net
     restart: unless-stopped
 
-  # LLM Router - Routes to different LLM providers
+  # LLM Router - Routes to different LLM providers with load balancing
   llm-router:
     build:
       context: ./services/llm-router
@@ -65,7 +65,12 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Multi-endpoint support: comma-separated URLs
+      - OLLAMA_ENDPOINTS=${OLLAMA_ENDPOINTS:-http://192.168.1.50:11434}
+      # Legacy single endpoint (fallback)
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://192.168.1.50:11434}
+      # Load balancing: round-robin, random, failover
+      - LOAD_BALANCE_STRATEGY=${LOAD_BALANCE_STRATEGY:-round-robin}
     networks:
       - strikepackage-net
     restart: unless-stopped
