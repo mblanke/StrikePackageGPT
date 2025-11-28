@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
     <link rel="icon" type="image/png" href="/static/icon.png">
     <script>
         tailwind.config = {
@@ -53,6 +54,15 @@
         @keyframes pulse-red { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         .pulse-red { animation: pulse-red 2s ease-in-out infinite; }
         .severity-badge { font-weight: 600; padding: 2px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase; }
+        /* Network Map Styles */
+        .network-map-container { background: radial-gradient(circle at center, #1a1a1a 0%, #0a0a0a 100%); }
+        .network-node { cursor: pointer; transition: transform 0.2s ease; }
+        .network-node:hover { transform: scale(1.1); }
+        .network-link { stroke: #3a3a3a; stroke-width: 2; fill: none; }
+        .network-link.active { stroke: #dc2626; stroke-width: 3; }
+        .node-label { font-size: 11px; fill: #a3a3a3; text-anchor: middle; }
+        .node-ip { font-size: 10px; fill: #666; text-anchor: middle; font-family: monospace; }
+        .device-icon { font-size: 24px; }
     </style>
 </head>
 <body class="bg-sp-black text-sp-white">
@@ -137,6 +147,12 @@
                         class="px-4 py-2 font-medium transition border-b-2 flex items-center gap-2">
                     ⛓️ Attack Chains
                     <span x-show="attackChains.length > 0" class="px-2 py-0.5 bg-sp-red/30 rounded-full text-xs" x-text="attackChains.length"></span>
+                </button>
+                <button @click="activeTab = 'network-map'" 
+                        :class="activeTab === 'network-map' ? 'border-sp-red text-sp-red bg-sp-grey' : 'border-transparent text-sp-white-muted hover:text-white hover:bg-sp-grey-light'"
+                        class="px-4 py-2 font-medium transition border-b-2 flex items-center gap-2">
+                    🗺️ Network Map
+                    <span x-show="networkHosts.length > 0" class="px-2 py-0.5 bg-sp-red/30 rounded-full text-xs" x-text="networkHosts.length"></span>
                 </button>
             </div>
         </header>
@@ -397,6 +413,164 @@
                         </template>
                     </div>
                 </div>
+
+                <!-- Network Map Tab -->
+                <div x-show="activeTab === 'network-map'" class="flex-1 flex flex-col overflow-hidden">
+                    <div class="p-4 border-b border-sp-grey-mid bg-sp-dark flex justify-between items-center">
+                        <div>
+                            <h2 class="text-xl font-bold text-sp-white">🗺️ Network Map</h2>
+                            <p class="text-sm text-sp-white-muted">Discovered hosts with OS detection</p>
+                        </div>
+                        <div class="flex gap-3">
+                            <button @click="showRangeScanModal = true" 
+                                    class="bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded text-sm transition flex items-center gap-2">
+                                🔍 Scan Range
+                            </button>
+                            <button @click="refreshNetworkMap()" 
+                                    class="bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded text-sm transition flex items-center gap-2"
+                                    :disabled="networkMapLoading">
+                                🔄 Refresh
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Legend -->
+                    <div class="p-3 bg-sp-dark border-b border-sp-grey-mid flex items-center gap-6 text-sm">
+                        <span class="text-sp-white-muted">Legend:</span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-2xl">🪟</span>
+                            <span class="text-sp-white-muted">Windows</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-2xl">🐧</span>
+                            <span class="text-sp-white-muted">Linux</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-2xl">🍎</span>
+                            <span class="text-sp-white-muted">macOS</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-2xl">📡</span>
+                            <span class="text-sp-white-muted">Network Device</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-2xl">🖥️</span>
+                            <span class="text-sp-white-muted">Server</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-2xl">❓</span>
+                            <span class="text-sp-white-muted">Unknown</span>
+                        </div>
+                    </div>
+
+                    <div x-show="networkHosts.length === 0 && !networkMapLoading" class="flex-1 flex items-center justify-center">
+                        <div class="text-center text-sp-white-muted">
+                            <p class="text-6xl mb-4">🗺️</p>
+                            <p class="text-lg">No hosts discovered yet</p>
+                            <p class="text-sm mt-2">Run a network range scan to discover hosts</p>
+                            <button @click="showRangeScanModal = true" 
+                                    class="mt-4 bg-sp-red hover:bg-sp-red-dark px-6 py-2 rounded transition">
+                                🔍 Scan Network Range
+                            </button>
+                        </div>
+                    </div>
+
+                    <div x-show="networkMapLoading" class="flex-1 flex items-center justify-center">
+                        <div class="text-center text-sp-white-muted">
+                            <div class="text-4xl mb-4 animate-spin">🔄</div>
+                            <p>Scanning network...</p>
+                        </div>
+                    </div>
+
+                    <!-- Network Map SVG -->
+                    <div x-show="networkHosts.length > 0 && !networkMapLoading" class="flex-1 network-map-container relative">
+                        <svg id="networkMapSvg" class="w-full h-full"></svg>
+                    </div>
+
+                    <!-- Host Details Panel -->
+                    <div x-show="selectedHost" x-transition 
+                         class="absolute right-4 top-32 w-80 bg-sp-dark border border-sp-grey-mid rounded-lg shadow-xl z-10">
+                        <div class="p-4 border-b border-sp-grey-mid flex justify-between items-center">
+                            <h3 class="font-bold text-sp-white flex items-center gap-2">
+                                <span x-text="getDeviceIcon(selectedHost?.os_type)" class="text-2xl"></span>
+                                <span x-text="selectedHost?.hostname || selectedHost?.ip"></span>
+                            </h3>
+                            <button @click="selectedHost = null" class="text-sp-white-muted hover:text-white">✕</button>
+                        </div>
+                        <div class="p-4 space-y-3 text-sm">
+                            <div class="flex justify-between">
+                                <span class="text-sp-white-muted">IP Address:</span>
+                                <span class="font-mono text-sp-red" x-text="selectedHost?.ip"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-sp-white-muted">OS Type:</span>
+                                <span x-text="selectedHost?.os_type || 'Unknown'" 
+                                      :class="getOsColor(selectedHost?.os_type)"></span>
+                            </div>
+                            <div x-show="selectedHost?.os_details" class="flex justify-between">
+                                <span class="text-sp-white-muted">OS Details:</span>
+                                <span class="text-sp-white text-right text-xs" x-text="selectedHost?.os_details"></span>
+                            </div>
+                            <div x-show="selectedHost?.mac" class="flex justify-between">
+                                <span class="text-sp-white-muted">MAC Address:</span>
+                                <span class="font-mono text-xs" x-text="selectedHost?.mac"></span>
+                            </div>
+                            <div x-show="selectedHost?.vendor" class="flex justify-between">
+                                <span class="text-sp-white-muted">Vendor:</span>
+                                <span class="text-sp-white" x-text="selectedHost?.vendor"></span>
+                            </div>
+                            <div x-show="selectedHost?.ports && selectedHost.ports.length > 0">
+                                <span class="text-sp-white-muted">Open Ports:</span>
+                                <div class="mt-2 flex flex-wrap gap-1">
+                                    <template x-for="port in selectedHost?.ports?.slice(0, 10)" :key="port.port">
+                                        <span class="px-2 py-1 bg-sp-grey rounded text-xs font-mono" 
+                                              x-text="port.port + '/' + port.protocol"></span>
+                                    </template>
+                                    <span x-show="selectedHost?.ports?.length > 10" 
+                                          class="px-2 py-1 bg-sp-grey rounded text-xs text-sp-white-muted"
+                                          x-text="'+' + (selectedHost.ports.length - 10) + ' more'"></span>
+                                </div>
+                            </div>
+                            <div class="pt-3 border-t border-sp-grey-mid flex gap-2">
+                                <button @click="scanHost(selectedHost.ip)" 
+                                        class="flex-1 bg-sp-red hover:bg-sp-red-dark px-3 py-2 rounded text-xs">
+                                    🔬 Deep Scan
+                                </button>
+                                <button @click="terminalInput = 'nmap -sV ' + selectedHost.ip; activeTab = 'terminal'" 
+                                        class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-xs">
+                                    🖥️ Terminal
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Host List Sidebar -->
+                    <div x-show="networkHosts.length > 0" 
+                         class="absolute left-4 top-32 bottom-4 w-64 bg-sp-dark/95 border border-sp-grey-mid rounded-lg overflow-hidden">
+                        <div class="p-3 border-b border-sp-grey-mid">
+                            <h4 class="font-semibold text-sp-white text-sm">Discovered Hosts (<span x-text="networkHosts.length"></span>)</h4>
+                        </div>
+                        <div class="overflow-y-auto" style="max-height: calc(100% - 45px);">
+                            <template x-for="host in networkHosts" :key="host.ip">
+                                <div @click="selectHost(host)" 
+                                     :class="selectedHost?.ip === host.ip ? 'bg-sp-red/20 border-l-2 border-sp-red' : 'hover:bg-sp-grey'"
+                                     class="p-3 cursor-pointer border-b border-sp-grey-mid/50 transition">
+                                    <div class="flex items-center gap-2">
+                                        <span x-text="getDeviceIcon(host.os_type)" class="text-xl"></span>
+                                        <div class="flex-1 min-w-0">
+                                            <div class="font-mono text-sm text-sp-red truncate" x-text="host.ip"></div>
+                                            <div class="text-xs text-sp-white-muted truncate" 
+                                                 x-text="host.hostname || host.os_type || 'Unknown'"></div>
+                                        </div>
+                                        <span x-show="host.ports?.length" 
+                                              class="text-xs bg-sp-grey px-2 py-0.5 rounded"
+                                              x-text="host.ports.length + ' ports'"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
             </main>
         </div>
 
@@ -486,6 +660,56 @@
                 </template>
             </div>
         </div>
+
+        <!-- Range Scan Modal -->
+        <div x-show="showRangeScanModal" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div class="bg-sp-dark rounded-lg p-6 w-full max-w-md border border-sp-grey-mid glow-red" @click.away="showRangeScanModal = false">
+                <h3 class="text-lg font-bold mb-4 text-sp-white">🔍 Network Range Scan</h3>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-sp-white-muted mb-1">Target Range</label>
+                        <input type="text" x-model="rangeScanTarget" 
+                               placeholder="192.168.1.0/24 or 10.0.0.1-254"
+                               class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white placeholder-sp-white-muted font-mono">
+                        <p class="text-xs text-sp-white-muted mt-1">CIDR notation or IP range</p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm text-sp-white-muted mb-1">Scan Type</label>
+                        <select x-model="rangeScanType" 
+                                class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red">
+                            <option value="ping">Ping Sweep (Fast)</option>
+                            <option value="quick">Quick Scan (Top 100 ports)</option>
+                            <option value="os">OS Detection</option>
+                            <option value="full">Full Scan (All ports + OS)</option>
+                        </select>
+                    </div>
+
+                    <div class="bg-sp-grey/50 p-3 rounded text-xs text-sp-white-muted">
+                        <p class="font-semibold text-sp-white mb-1">Scan Options:</p>
+                        <ul class="space-y-1">
+                            <li>• <strong>Ping Sweep:</strong> Fast host discovery only</li>
+                            <li>• <strong>Quick Scan:</strong> Top 100 ports with OS hints</li>
+                            <li>• <strong>OS Detection:</strong> Detailed OS fingerprinting</li>
+                            <li>• <strong>Full Scan:</strong> Complete port + OS (slower)</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="flex gap-3 mt-6">
+                    <button @click="showRangeScanModal = false" 
+                            class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded transition">
+                        Cancel
+                    </button>
+                    <button @click="startRangeScan()" 
+                            class="flex-1 bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded font-semibold transition"
+                            :disabled="!rangeScanTarget">
+                        Start Scan
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -515,6 +739,12 @@
                 showProcesses: false,
                 findings: [],
                 attackChains: [],
+                networkHosts: [],
+                selectedHost: null,
+                networkMapLoading: false,
+                showRangeScanModal: false,
+                rangeScanTarget: '',
+                rangeScanType: 'os',
 
                 phases: [
                     {
@@ -936,6 +1166,236 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                         const container = document.getElementById(containerId);
                         if (container) container.scrollTop = container.scrollHeight;
                     });
+                },
+
+                // Network Map Functions
+                getDeviceIcon(osType) {
+                    if (!osType) return '❓';
+                    const os = osType.toLowerCase();
+                    if (os.includes('windows')) return '🪟';
+                    if (os.includes('linux') || os.includes('ubuntu') || os.includes('debian') || os.includes('centos') || os.includes('redhat') || os.includes('fedora')) return '🐧';
+                    if (os.includes('mac') || os.includes('darwin') || os.includes('apple') || os.includes('ios')) return '🍎';
+                    if (os.includes('cisco') || os.includes('juniper') || os.includes('router') || os.includes('switch') || os.includes('fortinet') || os.includes('palo alto')) return '📡';
+                    if (os.includes('server') || os.includes('esxi') || os.includes('vmware')) return '🖥️';
+                    if (os.includes('printer') || os.includes('hp') || os.includes('canon') || os.includes('epson')) return '🖨️';
+                    if (os.includes('android')) return '📱';
+                    if (os.includes('freebsd') || os.includes('openbsd')) return '😈';
+                    return '❓';
+                },
+
+                getOsColor(osType) {
+                    if (!osType) return 'text-sp-white-muted';
+                    const os = osType.toLowerCase();
+                    if (os.includes('windows')) return 'text-blue-400';
+                    if (os.includes('linux')) return 'text-yellow-400';
+                    if (os.includes('mac') || os.includes('apple')) return 'text-gray-300';
+                    if (os.includes('cisco') || os.includes('router')) return 'text-green-400';
+                    return 'text-sp-white';
+                },
+
+                selectHost(host) {
+                    this.selectedHost = host;
+                    this.highlightHostOnMap(host.ip);
+                },
+
+                highlightHostOnMap(ip) {
+                    d3.selectAll('.network-node').classed('selected', false);
+                    d3.select(`[data-ip="${ip}"]`).classed('selected', true);
+                },
+
+                async startRangeScan() {
+                    if (!this.rangeScanTarget) return;
+                    this.showRangeScanModal = false;
+                    this.networkMapLoading = true;
+                    this.activeTab = 'network-map';
+                    
+                    try {
+                        const response = await fetch('/api/network/scan', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                target: this.rangeScanTarget,
+                                scan_type: this.rangeScanType
+                            })
+                        });
+                        const data = await response.json();
+                        
+                        if (data.scan_id) {
+                            // Poll for results
+                            await this.pollNetworkScan(data.scan_id);
+                        }
+                    } catch (e) {
+                        console.error('Failed to start network scan:', e);
+                        this.messages.push({
+                            role: 'assistant',
+                            phase: 'Reconnaissance',
+                            content: '❌ Failed to start network scan: ' + e.message
+                        });
+                    }
+                    this.networkMapLoading = false;
+                },
+
+                async pollNetworkScan(scanId) {
+                    const maxAttempts = 120; // 10 minutes max
+                    for (let i = 0; i < maxAttempts; i++) {
+                        await new Promise(r => setTimeout(r, 5000));
+                        try {
+                            const response = await fetch(`/api/network/scan/${scanId}`);
+                            const data = await response.json();
+                            
+                            if (data.status === 'completed') {
+                                this.networkHosts = data.hosts || [];
+                                this.$nextTick(() => this.renderNetworkMap());
+                                return;
+                            } else if (data.status === 'failed') {
+                                throw new Error('Scan failed');
+                            }
+                            // Update partial results
+                            if (data.hosts && data.hosts.length > 0) {
+                                this.networkHosts = data.hosts;
+                                this.$nextTick(() => this.renderNetworkMap());
+                            }
+                        } catch (e) {
+                            console.error('Failed to poll scan:', e);
+                        }
+                    }
+                },
+
+                async refreshNetworkMap() {
+                    this.networkMapLoading = true;
+                    try {
+                        const response = await fetch('/api/network/hosts');
+                        const data = await response.json();
+                        this.networkHosts = data.hosts || [];
+                        this.$nextTick(() => this.renderNetworkMap());
+                    } catch (e) {
+                        console.error('Failed to refresh network map:', e);
+                    }
+                    this.networkMapLoading = false;
+                },
+
+                scanHost(ip) {
+                    this.scanModal = { tool: 'nmap', target: ip, scanType: 'full', types: ['quick', 'full', 'vuln'] };
+                    this.scanModalOpen = true;
+                },
+
+                renderNetworkMap() {
+                    const svg = d3.select('#networkMapSvg');
+                    svg.selectAll('*').remove();
+                    
+                    if (this.networkHosts.length === 0) return;
+                    
+                    const container = document.getElementById('networkMapSvg').parentElement;
+                    const width = container.clientWidth;
+                    const height = container.clientHeight;
+                    
+                    // Create a gateway node (center)
+                    const gatewayIp = this.networkHosts[0]?.ip.split('.').slice(0, 3).join('.') + '.1';
+                    const nodes = [
+                        { id: 'gateway', ip: gatewayIp, os_type: 'router', hostname: 'Gateway', isGateway: true }
+                    ];
+                    
+                    // Add host nodes
+                    this.networkHosts.forEach(host => {
+                        nodes.push({ 
+                            id: host.ip, 
+                            ip: host.ip, 
+                            os_type: host.os_type,
+                            hostname: host.hostname,
+                            ports: host.ports
+                        });
+                    });
+                    
+                    // Create links from each host to gateway
+                    const links = this.networkHosts.map(host => ({
+                        source: 'gateway',
+                        target: host.ip
+                    }));
+                    
+                    // Force simulation
+                    const simulation = d3.forceSimulation(nodes)
+                        .force('link', d3.forceLink(links).id(d => d.id).distance(150))
+                        .force('charge', d3.forceManyBody().strength(-300))
+                        .force('center', d3.forceCenter(width / 2, height / 2))
+                        .force('collision', d3.forceCollide().radius(60));
+                    
+                    // Draw links
+                    const link = svg.append('g')
+                        .selectAll('line')
+                        .data(links)
+                        .enter().append('line')
+                        .attr('class', 'network-link')
+                        .attr('stroke', '#3a3a3a')
+                        .attr('stroke-width', 2);
+                    
+                    // Draw nodes
+                    const node = svg.append('g')
+                        .selectAll('g')
+                        .data(nodes)
+                        .enter().append('g')
+                        .attr('class', 'network-node')
+                        .attr('data-ip', d => d.ip)
+                        .style('cursor', 'pointer')
+                        .on('click', (event, d) => {
+                            if (!d.isGateway) {
+                                const host = this.networkHosts.find(h => h.ip === d.ip);
+                                if (host) this.selectHost(host);
+                            }
+                        });
+                    
+                    // Node circles
+                    node.append('circle')
+                        .attr('r', d => d.isGateway ? 35 : 30)
+                        .attr('fill', d => d.isGateway ? '#1f1f1f' : '#2a2a2a')
+                        .attr('stroke', d => d.isGateway ? '#dc2626' : '#3a3a3a')
+                        .attr('stroke-width', 2);
+                    
+                    // Device icons
+                    node.append('text')
+                        .attr('class', 'device-icon')
+                        .attr('text-anchor', 'middle')
+                        .attr('dy', '0.35em')
+                        .text(d => this.getDeviceIcon(d.os_type));
+                    
+                    // IP labels
+                    node.append('text')
+                        .attr('class', 'node-ip')
+                        .attr('dy', 50)
+                        .text(d => d.ip);
+                    
+                    // Hostname labels
+                    node.append('text')
+                        .attr('class', 'node-label')
+                        .attr('dy', 65)
+                        .text(d => d.hostname || '');
+                    
+                    // Update positions on tick
+                    simulation.on('tick', () => {
+                        link
+                            .attr('x1', d => d.source.x)
+                            .attr('y1', d => d.source.y)
+                            .attr('x2', d => d.target.x)
+                            .attr('y2', d => d.target.y);
+                        
+                        node.attr('transform', d => `translate(${d.x},${d.y})`);
+                    });
+                    
+                    // Drag behavior
+                    node.call(d3.drag()
+                        .on('start', (event, d) => {
+                            if (!event.active) simulation.alphaTarget(0.3).restart();
+                            d.fx = d.x;
+                            d.fy = d.y;
+                        })
+                        .on('drag', (event, d) => {
+                            d.fx = event.x;
+                            d.fy = event.y;
+                        })
+                        .on('end', (event, d) => {
+                            if (!event.active) simulation.alphaTarget(0);
+                            d.fx = null;
+                            d.fy = null;
+                        }));
                 }
             }
         }
