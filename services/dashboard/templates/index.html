@@ -95,13 +95,22 @@
                             </div>
                         </template>
                     </div>
+                    <!-- AI Provider Indicator -->
+                    <div class="flex items-center gap-2 px-3 py-1.5 rounded border" 
+                         :class="getProviderStyle(selectedProvider)">
+                        <span x-text="getProviderIcon(selectedProvider)" class="text-lg"></span>
+                        <div class="flex flex-col">
+                            <span class="text-xs font-semibold" x-text="getProviderName(selectedProvider)"></span>
+                            <span class="text-xs opacity-75 font-mono" x-text="selectedModel"></span>
+                        </div>
+                    </div>
                     <select x-model="selectedProvider" @change="updateModels()" 
-                            class="bg-sp-grey border border-sp-grey-mid rounded px-3 py-1 text-sm text-sp-white focus:border-sp-red focus:outline-none">
-                        <option value="ollama">Ollama (Local)</option>
-                        <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
+                            class="bg-sp-grey border border-sp-grey-mid rounded px-3 py-1.5 text-sm text-sp-white focus:border-sp-red focus:outline-none">
+                        <option value="ollama">🦙 Ollama</option>
+                        <option value="openai">🤖 OpenAI</option>
+                        <option value="anthropic">🧠 Anthropic</option>
                     </select>
-                    <select x-model="selectedModel" class="bg-sp-grey border border-sp-grey-mid rounded px-3 py-1 text-sm text-sp-white focus:border-sp-red focus:outline-none">
+                    <select x-model="selectedModel" class="bg-sp-grey border border-sp-grey-mid rounded px-3 py-1.5 text-sm text-sp-white focus:border-sp-red focus:outline-none max-w-[200px]">
                         <template x-for="model in availableModels" :key="model">
                             <option :value="model" x-text="model"></option>
                         </template>
@@ -223,9 +232,17 @@
                                     ? 'bg-sp-red text-white max-w-3xl' 
                                     : 'bg-sp-grey text-sp-white-dim max-w-4xl border border-sp-grey-mid'"
                                     class="rounded-lg px-4 py-3 message-content">
-                                    <template x-if="msg.role === 'assistant' && msg.phase">
-                                        <div class="flex items-center gap-2 mb-2 pb-2 border-b border-sp-grey-mid">
-                                            <span class="text-xs px-2 py-1 bg-sp-red/20 text-sp-red rounded" x-text="msg.phase"></span>
+                                    <template x-if="msg.role === 'assistant'">
+                                        <div class="flex items-center gap-2 mb-2 pb-2 border-b border-sp-grey-mid flex-wrap">
+                                            <!-- AI Provider Badge -->
+                                            <div class="flex items-center gap-1 px-2 py-0.5 rounded text-xs" 
+                                                 :class="getProviderBadgeStyle(msg.provider || 'ollama')">
+                                                <span x-text="getProviderIcon(msg.provider || 'ollama')"></span>
+                                                <span x-text="msg.model || 'AI'"></span>
+                                            </div>
+                                            <template x-if="msg.phase">
+                                                <span class="text-xs px-2 py-1 bg-sp-red/20 text-sp-red rounded" x-text="msg.phase"></span>
+                                            </template>
                                             <template x-if="msg.risk_score">
                                                 <span :class="getRiskColor(msg.risk_score)" 
                                                       class="severity-badge" 
@@ -853,8 +870,10 @@
                     
                     this.messages.push({
                         role: 'assistant',
-phase: 'Reconnaissance',
-        content: `# Welcome to GooseStrike! 🍁I'm your AI-powered penetration testing assistant, following the **6-Phase Enterprise Methodology**:
+                        phase: 'Reconnaissance',
+                        provider: 'ollama',
+                        model: 'System',
+                        content: `# Welcome to GooseStrike! 🍁I'm your AI-powered penetration testing assistant, following the **6-Phase Enterprise Methodology**:
 
 | Phase | Purpose |
 |-------|---------|
@@ -965,6 +984,8 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                             role: 'assistant', 
                             content: data.content || 'Sorry, I encountered an error.',
                             phase: this.getCurrentPhase().name,
+                            provider: this.selectedProvider,
+                            model: this.selectedModel,
                             risk_score: data.risk_score,
                             findings: data.findings
                         };
@@ -1133,6 +1154,43 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                 },
 
                 countBySeverity(severity) { return this.findings.filter(f => f.severity === severity).length; },
+
+                // AI Provider display helpers
+                getProviderIcon(provider) {
+                    const icons = {
+                        ollama: '🦙',
+                        openai: '🤖',
+                        anthropic: '🧠'
+                    };
+                    return icons[provider] || '🤖';
+                },
+
+                getProviderName(provider) {
+                    const names = {
+                        ollama: 'Ollama',
+                        openai: 'OpenAI',
+                        anthropic: 'Anthropic'
+                    };
+                    return names[provider] || provider;
+                },
+
+                getProviderStyle(provider) {
+                    const styles = {
+                        ollama: 'bg-yellow-500/20 border-yellow-500/50 text-yellow-400',
+                        openai: 'bg-green-500/20 border-green-500/50 text-green-400',
+                        anthropic: 'bg-orange-500/20 border-orange-500/50 text-orange-400'
+                    };
+                    return styles[provider] || 'bg-sp-grey border-sp-grey-mid text-sp-white';
+                },
+
+                getProviderBadgeStyle(provider) {
+                    const styles = {
+                        ollama: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+                        openai: 'bg-green-500/20 text-green-400 border border-green-500/30',
+                        anthropic: 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                    };
+                    return styles[provider] || 'bg-sp-grey text-sp-white-muted';
+                },
 
                 getSeverityBadgeClass(severity) {
                     const classes = {
