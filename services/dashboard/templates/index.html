@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StrikePackageGPT - Security Analysis Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="icon" type="image/png" href="/static/icon.png">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'sp-black': '#0a0a0a',
+                        'sp-dark': '#141414',
+                        'sp-grey': '#1f1f1f',
+                        'sp-grey-light': '#2a2a2a',
+                        'sp-grey-mid': '#3a3a3a',
+                        'sp-red': '#dc2626',
+                        'sp-red-dark': '#991b1b',
+                        'sp-red-light': '#ef4444',
+                        'sp-white': '#ffffff',
+                        'sp-white-dim': '#e5e5e5',
+                        'sp-white-muted': '#a3a3a3',
+                        'sev-critical': '#dc2626',
+                        'sev-high': '#ea580c',
+                        'sev-medium': '#eab308',
+                        'sev-low': '#22c55e',
+                        'sev-info': '#3b82f6',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .chat-container { height: calc(100vh - 320px); }
+        .terminal-container { height: calc(100vh - 280px); }
+        .message-content pre { background: #0a0a0a; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; font-family: monospace; border: 1px solid #2a2a2a; }
+        .message-content code { background: #1f1f1f; padding: 0.2rem 0.4rem; border-radius: 0.25rem; font-family: monospace; color: #ef4444; }
+        .typing-indicator span { animation: blink 1.4s infinite both; }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes blink { 0%, 60%, 100% { opacity: 0; } 30% { opacity: 1; } }
+        .terminal-output { font-family: 'Fira Code', 'Monaco', 'Consolas', monospace; font-size: 13px; line-height: 1.5; }
+        .terminal-output .stdout { color: #e5e5e5; }
+        .terminal-output .stderr { color: #ef4444; }
+        .terminal-output .cmd { color: #dc2626; }
+        .scan-card { transition: all 0.2s ease; }
+        .scan-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(220, 38, 38, 0.15); }
+        .glow-red { box-shadow: 0 0 20px rgba(220, 38, 38, 0.3); }
+        @keyframes pulse-red { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .pulse-red { animation: pulse-red 2s ease-in-out infinite; }
+        .severity-badge { font-weight: 600; padding: 2px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase; }
+    </style>
+</head>
+<body class="bg-sp-black text-sp-white">
+    <div x-data="dashboard()" x-init="init()" class="min-h-screen flex flex-col">
+        <!-- Header -->
+        <header class="bg-sp-dark border-b border-sp-grey-mid px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-4">
+                    <div class="flex items-center gap-3">
+                        <img src="/static/icon.png" alt="StrikePackageGPT" class="h-10 w-10" onerror="this.style.display='none'">
+                        <div>
+                            <h1 class="text-2xl font-bold text-sp-red">StrikePackageGPT</h1>
+                            <span class="text-xs text-sp-white-muted">AI-Powered Penetration Testing Platform</span>
+                        </div>
+                    </div>
+                    <img src="/static/flag.png" alt="Canada" class="h-6 ml-2" onerror="this.style.display='none'">
+                </div>
+                <div class="flex items-center gap-4">
+                    <div x-show="runningProcesses.length > 0" 
+                         class="flex items-center gap-2 px-3 py-1.5 rounded bg-sp-red/20 border border-sp-red/50 cursor-pointer"
+                         @click="showProcesses = !showProcesses">
+                        <span class="w-2 h-2 rounded-full bg-sp-red pulse-red"></span>
+                        <span class="text-sp-red text-sm font-medium" x-text="runningProcesses.length + ' Running'"></span>
+                    </div>
+                    <div class="flex items-center gap-3 text-sm">
+                        <template x-for="(status, service) in services" :key="service">
+                            <div class="flex items-center gap-1 px-2 py-1 rounded bg-sp-grey">
+                                <span class="w-2 h-2 rounded-full" :class="status ? 'bg-green-500' : 'bg-sp-red'"></span>
+                                <span class="text-sp-white-muted text-xs" x-text="service"></span>
+                            </div>
+                        </template>
+                    </div>
+                    <select x-model="selectedProvider" @change="updateModels()" 
+                            class="bg-sp-grey border border-sp-grey-mid rounded px-3 py-1 text-sm text-sp-white focus:border-sp-red focus:outline-none">
+                        <option value="ollama">Ollama (Local)</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                    </select>
+                    <select x-model="selectedModel" class="bg-sp-grey border border-sp-grey-mid rounded px-3 py-1 text-sm text-sp-white focus:border-sp-red focus:outline-none">
+                        <template x-for="model in availableModels" :key="model">
+                            <option :value="model" x-text="model"></option>
+                        </template>
+                    </select>
+                </div>
+            </div>
+            
+            <div x-show="showProcesses && runningProcesses.length > 0" x-transition
+                 class="mt-4 p-3 bg-sp-grey rounded border border-sp-grey-mid">
+                <h4 class="text-sm font-semibold text-sp-red mb-2">🔄 Running Processes</h4>
+                <div class="space-y-1">
+                    <template x-for="proc in runningProcesses" :key="proc.pid">
+                        <div class="flex items-center justify-between text-xs bg-sp-dark p-2 rounded">
+                            <span class="text-sp-white-muted font-mono" x-text="proc.command"></span>
+                            <div class="flex items-center gap-3">
+                                <span class="text-sp-white-muted">CPU: <span class="text-sp-red" x-text="proc.cpu + '%'"></span></span>
+                                <span class="text-sp-white-muted">Time: <span x-text="proc.time"></span></span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+            
+            <!-- 6-Phase Methodology Tabs -->
+            <div class="flex gap-1 mt-4 border-b border-sp-grey-mid">
+                <template x-for="phase in phases" :key="phase.id">
+                    <button @click="activePhase = phase.id; activeTab = 'phase'" 
+                            :class="activePhase === phase.id && activeTab === 'phase' ? 'border-sp-red text-sp-red bg-sp-grey' : 'border-transparent text-sp-white-muted hover:text-white hover:bg-sp-grey-light'"
+                            class="px-4 py-2 font-medium transition border-b-2 flex items-center gap-2">
+                        <span x-text="phase.icon"></span>
+                        <span class="hidden lg:inline" x-text="phase.name"></span>
+                        <span class="lg:hidden" x-text="phase.short"></span>
+                    </button>
+                </template>
+                <div class="flex-1"></div>
+                <button @click="activeTab = 'terminal'" 
+                        :class="activeTab === 'terminal' ? 'border-sp-red text-sp-red bg-sp-grey' : 'border-transparent text-sp-white-muted hover:text-white hover:bg-sp-grey-light'"
+                        class="px-4 py-2 font-medium transition border-b-2">
+                    🖥️ Terminal
+                </button>
+                <button @click="activeTab = 'attack-chains'" 
+                        :class="activeTab === 'attack-chains' ? 'border-sp-red text-sp-red bg-sp-grey' : 'border-transparent text-sp-white-muted hover:text-white hover:bg-sp-grey-light'"
+                        class="px-4 py-2 font-medium transition border-b-2 flex items-center gap-2">
+                    ⛓️ Attack Chains
+                    <span x-show="attackChains.length > 0" class="px-2 py-0.5 bg-sp-red/30 rounded-full text-xs" x-text="attackChains.length"></span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="flex flex-1 overflow-hidden">
+            <!-- Sidebar -->
+            <aside class="w-64 bg-sp-dark border-r border-sp-grey-mid p-4 overflow-y-auto">
+                <div class="mb-4 p-3 bg-sp-grey rounded border border-sp-grey-mid">
+                    <h3 class="text-sm font-semibold text-sp-red mb-2" x-text="getCurrentPhase().name"></h3>
+                    <p class="text-xs text-sp-white-muted" x-text="getCurrentPhase().description"></p>
+                </div>
+
+                <h2 class="text-lg font-semibold mb-4 text-sp-white-dim">🛠️ Phase Tools</h2>
+                <div class="space-y-1 mb-6">
+                    <template x-for="tool in getCurrentPhase().tools" :key="tool.name">
+                        <button @click="askAboutTool(tool)"
+                                class="w-full text-left text-sm bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded transition">
+                            <span class="font-mono text-sp-red-light" x-text="tool.name"></span>
+                            <p class="text-xs text-sp-white-muted truncate" x-text="tool.description"></p>
+                        </button>
+                    </template>
+                </div>
+
+                <h2 class="text-lg font-semibold mb-4 text-sp-white-dim">⚡ Quick Actions</h2>
+                <div class="space-y-2">
+                    <template x-for="action in getCurrentPhase().quickActions" :key="action.label">
+                        <button @click="executeQuickAction(action)" 
+                                class="w-full text-left text-sm bg-sp-grey hover:bg-sp-grey-light hover:border-sp-red border border-transparent px-3 py-2 rounded flex items-center gap-2 transition">
+                            <span x-text="action.icon"></span> 
+                            <span x-text="action.label"></span>
+                        </button>
+                    </template>
+                </div>
+
+                <div class="mt-6" x-show="findings.length > 0">
+                    <h2 class="text-lg font-semibold mb-4 text-sp-white-dim">📊 Findings</h2>
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-sev-critical">Critical</span>
+                            <span class="font-bold" x-text="countBySeverity('critical')"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-sev-high">High</span>
+                            <span class="font-bold" x-text="countBySeverity('high')"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-sev-medium">Medium</span>
+                            <span class="font-bold" x-text="countBySeverity('medium')"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-sev-low">Low</span>
+                            <span class="font-bold" x-text="countBySeverity('low')"></span>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Content Area -->
+            <main class="flex-1 flex flex-col">
+                
+                <!-- Phase Content -->
+                <div x-show="activeTab === 'phase'" class="flex-1 flex flex-col">
+                    <div class="chat-container overflow-y-auto p-6 space-y-4" id="chatContainer">
+                        <template x-for="(msg, index) in messages" :key="index">
+                            <div :class="msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'">
+                                <div :class="msg.role === 'user' 
+                                    ? 'bg-sp-red text-white max-w-3xl' 
+                                    : 'bg-sp-grey text-sp-white-dim max-w-4xl border border-sp-grey-mid'"
+                                    class="rounded-lg px-4 py-3 message-content">
+                                    <template x-if="msg.role === 'assistant' && msg.phase">
+                                        <div class="flex items-center gap-2 mb-2 pb-2 border-b border-sp-grey-mid">
+                                            <span class="text-xs px-2 py-1 bg-sp-red/20 text-sp-red rounded" x-text="msg.phase"></span>
+                                            <template x-if="msg.risk_score">
+                                                <span :class="getRiskColor(msg.risk_score)" 
+                                                      class="severity-badge" 
+                                                      x-text="getRiskLabel(msg.risk_score)"></span>
+                                            </template>
+                                        </div>
+                                    </template>
+                                    <div x-html="renderMarkdown(msg.content)"></div>
+                                    <template x-if="msg.findings && msg.findings.length > 0">
+                                        <div class="mt-3 pt-3 border-t border-sp-grey-mid">
+                                            <h5 class="text-xs font-semibold text-sp-white-muted mb-2">Findings:</h5>
+                                            <div class="space-y-1">
+                                                <template x-for="finding in msg.findings" :key="finding.id">
+                                                    <div class="flex items-center gap-2 text-xs bg-sp-black/50 p-2 rounded">
+                                                        <span :class="getSeverityBadgeClass(finding.severity)" 
+                                                              class="severity-badge" 
+                                                              x-text="finding.severity"></span>
+                                                        <span x-text="finding.title"></span>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                        
+                        <div x-show="isLoading" class="flex justify-start">
+                            <div class="bg-sp-grey rounded-lg px-4 py-3 border border-sp-grey-mid">
+                                <div class="typing-indicator flex gap-1">
+                                    <span class="w-2 h-2 bg-sp-red rounded-full"></span>
+                                    <span class="w-2 h-2 bg-sp-red rounded-full"></span>
+                                    <span class="w-2 h-2 bg-sp-red rounded-full"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div x-show="phaseScans.length > 0" class="border-t border-sp-grey-mid bg-sp-dark p-3">
+                        <div class="flex items-center gap-4 overflow-x-auto">
+                            <span class="text-xs text-sp-white-muted font-semibold">Scans:</span>
+                            <template x-for="scan in phaseScans" :key="scan.scan_id">
+                                <div @click="viewScanDetails(scan)" 
+                                     class="flex items-center gap-2 px-3 py-1 bg-sp-grey rounded cursor-pointer hover:bg-sp-grey-light">
+                                    <span :class="{
+                                        'bg-yellow-500': scan.status === 'running' || scan.status === 'pending',
+                                        'bg-green-500': scan.status === 'completed',
+                                        'bg-sp-red': scan.status === 'failed'
+                                    }" class="w-2 h-2 rounded-full"></span>
+                                    <span class="text-xs text-sp-red font-mono" x-text="scan.tool"></span>
+                                    <span class="text-xs text-sp-white-muted" x-text="scan.target"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-sp-grey-mid p-4 bg-sp-dark">
+                        <form @submit.prevent="sendMessage()" class="flex gap-4">
+                            <input type="text" x-model="userInput" 
+                                   :placeholder="getPhasePrompt()"
+                                   class="flex-1 bg-sp-grey border border-sp-grey-mid rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-sp-red focus:border-transparent text-sp-white placeholder-sp-white-muted"
+                                   :disabled="isLoading">
+                            <button type="submit" 
+                                    class="bg-sp-red hover:bg-sp-red-dark disabled:bg-sp-grey-mid px-6 py-3 rounded-lg font-semibold transition text-white"
+                                    :disabled="isLoading || !userInput.trim()">
+                                Send
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Terminal Tab -->
+                <div x-show="activeTab === 'terminal'" class="flex-1 flex flex-col">
+                    <div class="terminal-container overflow-y-auto p-4 bg-sp-black font-mono" id="terminalOutput">
+                        <div class="terminal-output">
+                            <template x-for="(line, index) in terminalHistory" :key="index">
+                                <div>
+                                    <template x-if="line.type === 'cmd'">
+                                        <div class="cmd mb-1">
+                                            <span class="text-sp-red">kali@strikepackage</span>:<span class="text-sp-white-muted">~</span>$ <span class="text-white" x-text="line.content"></span>
+                                        </div>
+                                    </template>
+                                    <template x-if="line.type === 'stdout'">
+                                        <pre class="stdout whitespace-pre-wrap" x-text="line.content"></pre>
+                                    </template>
+                                    <template x-if="line.type === 'stderr'">
+                                        <pre class="stderr whitespace-pre-wrap" x-text="line.content"></pre>
+                                    </template>
+                                    <template x-if="line.type === 'info'">
+                                        <div class="text-sp-white-muted italic" x-text="line.content"></div>
+                                    </template>
+                                </div>
+                            </template>
+                            <div x-show="terminalLoading" class="text-sp-red animate-pulse">
+                                Executing command...
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-sp-grey-mid p-4 bg-sp-dark">
+                        <form @submit.prevent="executeCommand()" class="flex gap-4">
+                            <div class="flex items-center text-sp-red font-mono text-sm">
+                                kali@strikepackage:~$
+                            </div>
+                            <input type="text" x-model="terminalInput" 
+                                   placeholder="Enter command to execute in Kali container..."
+                                   class="flex-1 bg-sp-black border border-sp-grey-mid rounded px-4 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white placeholder-sp-white-muted"
+                                   :disabled="terminalLoading"
+                                   @keyup.up="historyUp()"
+                                   @keyup.down="historyDown()">
+                            <button type="submit" 
+                                    class="bg-sp-red hover:bg-sp-red-dark disabled:bg-sp-grey-mid px-4 py-2 rounded font-semibold transition text-white"
+                                    :disabled="terminalLoading || !terminalInput.trim()">
+                                Run
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Attack Chains Tab -->
+                <div x-show="activeTab === 'attack-chains'" class="flex-1 overflow-y-auto p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <div>
+                            <h2 class="text-xl font-bold text-sp-white">⛓️ Attack Chain Analysis</h2>
+                            <p class="text-sm text-sp-white-muted">Correlated vulnerabilities and potential attack paths</p>
+                        </div>
+                        <button @click="analyzeAttackChains()" 
+                                class="bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded text-sm transition flex items-center gap-2"
+                                :disabled="findings.length === 0">
+                            🔗 Analyze Chains
+                        </button>
+                    </div>
+
+                    <div x-show="attackChains.length === 0" class="text-center text-sp-white-muted py-12">
+                        <p class="text-4xl mb-4">⛓️</p>
+                        <p>No attack chains detected yet.</p>
+                        <p class="text-sm mt-2">Complete reconnaissance and vulnerability scanning to identify potential attack paths.</p>
+                    </div>
+
+                    <div class="space-y-6">
+                        <template x-for="(chain, chainIdx) in attackChains" :key="chainIdx">
+                            <div class="bg-sp-dark rounded-lg border border-sp-grey-mid overflow-hidden">
+                                <div class="p-4 border-b border-sp-grey-mid flex items-center justify-between">
+                                    <div class="flex items-center gap-3">
+                                        <span :class="getRiskColor(chain.risk_score)" 
+                                              class="severity-badge"
+                                              x-text="getRiskLabel(chain.risk_score)"></span>
+                                        <h3 class="font-bold text-sp-white" x-text="chain.name"></h3>
+                                    </div>
+                                    <div class="text-sm text-sp-white-muted">
+                                        Risk Score: <span class="text-sp-red font-bold" x-text="chain.risk_score.toFixed(1)"></span>/10
+                                    </div>
+                                </div>
+                                
+                                <div class="p-4">
+                                    <div class="relative">
+                                        <template x-for="(step, stepIdx) in chain.steps" :key="stepIdx">
+                                            <div class="flex items-start gap-4 mb-4 last:mb-0">
+                                                <div class="flex-shrink-0 w-8 h-8 rounded-full bg-sp-red flex items-center justify-center text-white font-bold text-sm">
+                                                    <span x-text="step.step"></span>
+                                                </div>
+                                                <div class="flex-1 bg-sp-grey rounded p-3">
+                                                    <div class="font-semibold text-sp-white" x-text="step.action"></div>
+                                                    <div class="text-sm text-sp-white-muted mt-1" x-text="step.method || step.vuln || step.tools"></div>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    
+                                    <div class="mt-4 pt-4 border-t border-sp-grey-mid">
+                                        <div class="flex items-start gap-2">
+                                            <span class="text-sp-red">⚠️</span>
+                                            <div>
+                                                <span class="text-sm font-semibold text-sp-white-muted">Impact:</span>
+                                                <span class="text-sm text-sp-white" x-text="chain.impact"></span>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center gap-4 mt-2 text-sm text-sp-white-muted">
+                                            <span>Likelihood: <span class="text-sp-red" x-text="(chain.likelihood * 100).toFixed(0) + '%'"></span></span>
+                                            <span x-text="chain.recommendation"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- Scan Modal -->
+        <div x-show="scanModalOpen" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div class="bg-sp-dark rounded-lg p-6 w-full max-w-md border border-sp-grey-mid glow-red" @click.away="scanModalOpen = false">
+                <h3 class="text-lg font-bold mb-4 text-sp-white">Start <span class="text-sp-red" x-text="scanModal.tool"></span> Scan</h3>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-sp-white-muted mb-1">Target</label>
+                        <input type="text" x-model="scanModal.target" 
+                               placeholder="IP, hostname, or URL"
+                               class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white placeholder-sp-white-muted">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm text-sp-white-muted mb-1">Scan Type</label>
+                        <select x-model="scanModal.scanType" 
+                                class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red">
+                            <template x-for="type in scanModal.types" :key="type">
+                                <option :value="type" x-text="type"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="flex gap-3 mt-6">
+                    <button @click="scanModalOpen = false" 
+                            class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded transition">
+                        Cancel
+                    </button>
+                    <button @click="startScan()" 
+                            class="flex-1 bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded font-semibold transition"
+                            :disabled="!scanModal.target">
+                        Start Scan
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scan Details Modal -->
+        <div x-show="detailsModalOpen" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div class="bg-sp-dark rounded-lg p-6 w-full max-w-4xl max-h-[80vh] overflow-y-auto border border-sp-grey-mid" @click.away="detailsModalOpen = false">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold text-sp-white">Scan Details</h3>
+                    <button @click="detailsModalOpen = false" class="text-sp-white-muted hover:text-white text-xl">✕</button>
+                </div>
+                
+                <template x-if="selectedScan">
+                    <div class="space-y-4">
+                        <div class="grid grid-cols-2 gap-4 text-sm">
+                            <div><span class="text-sp-white-muted">Tool:</span> <span class="text-sp-red font-bold" x-text="selectedScan.tool"></span></div>
+                            <div><span class="text-sp-white-muted">Target:</span> <span class="text-sp-white" x-text="selectedScan.target"></span></div>
+                            <div><span class="text-sp-white-muted">Status:</span> <span x-text="selectedScan.status"></span></div>
+                            <div><span class="text-sp-white-muted">Started:</span> <span x-text="selectedScan.started_at"></span></div>
+                        </div>
+                        
+                        <div>
+                            <h4 class="text-sm text-sp-white-muted mb-2">Command</h4>
+                            <pre class="bg-sp-black p-3 rounded text-sm overflow-x-auto border border-sp-grey font-mono text-sp-white" x-text="selectedScan.command"></pre>
+                        </div>
+
+                        <template x-if="selectedScan.parsed && selectedScan.parsed.findings">
+                            <div>
+                                <h4 class="text-sm text-sp-white-muted mb-2">Findings (<span x-text="selectedScan.parsed.findings.length"></span>)</h4>
+                                <div class="space-y-2 max-h-48 overflow-y-auto">
+                                    <template x-for="finding in selectedScan.parsed.findings" :key="finding.raw">
+                                        <div class="flex items-start gap-2 bg-sp-black p-2 rounded text-sm">
+                                            <span :class="getSeverityBadgeClass(finding.severity)" 
+                                                  class="severity-badge flex-shrink-0"
+                                                  x-text="finding.severity"></span>
+                                            <span class="text-sp-white-dim" x-text="finding.raw"></span>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+
+                        <template x-if="selectedScan.result && selectedScan.result.stdout">
+                            <div>
+                                <h4 class="text-sm text-sp-white-muted mb-2">Raw Output</h4>
+                                <pre class="bg-sp-black p-3 rounded text-sm overflow-x-auto text-sp-white-dim max-h-96 border border-sp-grey font-mono" x-text="selectedScan.result.stdout"></pre>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function dashboard() {
+            return {
+                activeTab: 'phase',
+                activePhase: 'recon',
+                messages: [],
+                userInput: '',
+                isLoading: false,
+                services: {},
+                selectedProvider: 'ollama',
+                selectedModel: 'llama3.2',
+                availableModels: ['llama3.2', 'codellama', 'mistral'],
+                providers: {},
+                terminalInput: '',
+                terminalHistory: [],
+                terminalLoading: false,
+                commandHistory: [],
+                historyIndex: -1,
+                scans: [],
+                scanModalOpen: false,
+                scanModal: { tool: '', target: '', scanType: '', types: [] },
+                detailsModalOpen: false,
+                selectedScan: null,
+                runningProcesses: [],
+                showProcesses: false,
+                findings: [],
+                attackChains: [],
+
+                phases: [
+                    {
+                        id: 'recon',
+                        name: 'Reconnaissance',
+                        short: 'Recon',
+                        icon: '🔍',
+                        description: 'Gather information about the target through passive and active reconnaissance techniques.',
+                        tools: [
+                            { name: 'nmap', description: 'Network scanner and port enumeration' },
+                            { name: 'theHarvester', description: 'OSINT gathering for emails, subdomains' },
+                            { name: 'amass', description: 'Subdomain enumeration and mapping' },
+                            { name: 'whatweb', description: 'Web technology fingerprinting' },
+                        ],
+                        quickActions: [
+                            { icon: '🎯', label: 'Quick Port Scan', tool: 'nmap', scanType: 'quick' },
+                            { icon: '🔎', label: 'Tech Fingerprint', tool: 'whatweb', scanType: 'default' },
+                        ]
+                    },
+                    {
+                        id: 'scanning',
+                        name: 'Scanning',
+                        short: 'Scan',
+                        icon: '📡',
+                        description: 'Perform in-depth scanning and enumeration of discovered services.',
+                        tools: [
+                            { name: 'nmap -sV', description: 'Service version detection' },
+                            { name: 'gobuster', description: 'Directory and file brute-force' },
+                            { name: 'enum4linux', description: 'SMB/Windows enumeration' },
+                        ],
+                        quickActions: [
+                            { icon: '🔬', label: 'Full Port Scan', tool: 'nmap', scanType: 'full' },
+                            { icon: '📁', label: 'Dir Brute Force', tool: 'gobuster', scanType: 'dir' },
+                        ]
+                    },
+                    {
+                        id: 'vuln',
+                        name: 'Vulnerability Assessment',
+                        short: 'Vuln',
+                        icon: '🛡️',
+                        description: 'Identify and assess vulnerabilities in discovered services.',
+                        tools: [
+                            { name: 'nikto', description: 'Web server vulnerability scanner' },
+                            { name: 'nuclei', description: 'Template-based vuln scanner' },
+                            { name: 'sqlmap', description: 'SQL injection detection' },
+                        ],
+                        quickActions: [
+                            { icon: '🕸️', label: 'Web Vuln Scan', tool: 'nikto', scanType: 'default' },
+                            { icon: '💉', label: 'SQLi Test', tool: 'sqlmap', scanType: 'test' },
+                            { icon: '🔎', label: 'Nmap Vuln Scripts', tool: 'nmap', scanType: 'vuln' },
+                        ]
+                    },
+                    {
+                        id: 'exploit',
+                        name: 'Exploitation',
+                        short: 'Exploit',
+                        icon: '💥',
+                        description: 'Safely exploit verified vulnerabilities to demonstrate impact.',
+                        tools: [
+                            { name: 'metasploit', description: 'Exploitation framework' },
+                            { name: 'hydra', description: 'Password brute-force tool' },
+                            { name: 'searchsploit', description: 'Exploit database search' },
+                        ],
+                        quickActions: [
+                            { icon: '🔍', label: 'Search Exploits', prompt: 'Search for exploits for the vulnerabilities we found' },
+                        ]
+                    },
+                    {
+                        id: 'report',
+                        name: 'Reporting',
+                        short: 'Report',
+                        icon: '📄',
+                        description: 'Document findings and create professional security reports.',
+                        tools: [
+                            { name: 'Report Generator', description: 'AI-generated executive summary' },
+                            { name: 'CVSS Calculator', description: 'Severity scoring' },
+                        ],
+                        quickActions: [
+                            { icon: '📊', label: 'Executive Summary', prompt: 'Generate an executive summary of our findings' },
+                            { icon: '📋', label: 'Technical Report', prompt: 'Create a detailed technical report' },
+                        ]
+                    },
+                    {
+                        id: 'retest',
+                        name: 'Retesting',
+                        short: 'Retest',
+                        icon: '🔄',
+                        description: 'Verify that vulnerabilities have been properly remediated.',
+                        tools: [
+                            { name: 'Verification Scan', description: 'Re-run previous scans' },
+                        ],
+                        quickActions: [
+                            { icon: '✅', label: 'Verify Fixes', prompt: 'Create a retest plan for the identified vulnerabilities' },
+                        ]
+                    }
+                ],
+
+                async init() {
+                    await this.checkStatus();
+                    await this.checkRunningProcesses();
+                    setInterval(() => this.checkStatus(), 30000);
+                    setInterval(() => this.checkRunningProcesses(), 5000);
+                    await this.loadProviders();
+                    await this.refreshScans();
+                    setInterval(() => this.pollRunningScans(), 5000);
+                    
+                    this.messages.push({
+                        role: 'assistant',
+                        phase: 'Reconnaissance',
+                        content: `# Welcome to StrikePackageGPT! 🍁
+
+I'm your AI-powered penetration testing assistant, following the **6-Phase Enterprise Methodology**:
+
+| Phase | Purpose |
+|-------|---------|
+| 🔍 **Reconnaissance** | OSINT, subdomain discovery, port scanning |
+| 📡 **Scanning** | Service enumeration, version detection |
+| 🛡️ **Vulnerability Assessment** | CVE identification, CVSS scoring |
+| 💥 **Exploitation** | Safe, controlled exploitation |
+| 📄 **Reporting** | Executive & technical reports |
+| 🔄 **Retesting** | Verify remediation |
+
+**New Features:**
+- ⛓️ **Attack Chain Analysis** - Correlate vulnerabilities into attack paths
+- 🎯 **CVSS Scoring** - Risk severity badges on all findings
+- 🤖 **Context-Aware AI** - Prompts tailored to each phase
+
+Select a phase above to begin, or use the quick actions in the sidebar!`
+                    });
+
+                    this.terminalHistory.push({
+                        type: 'info',
+                        content: 'Connected to Kali container. Type commands below to execute.'
+                    });
+                },
+
+                getCurrentPhase() {
+                    return this.phases.find(p => p.id === this.activePhase) || this.phases[0];
+                },
+
+                getPhasePrompt() {
+                    const prompts = {
+                        recon: 'Ask about reconnaissance techniques or specify a target to scan...',
+                        scanning: 'Request service enumeration or detailed scanning...',
+                        vuln: 'Ask about vulnerability assessment or analyze scan results...',
+                        exploit: 'Discuss exploitation strategies or search for exploits...',
+                        report: 'Request report generation or findings summary...',
+                        retest: 'Plan retesting or verify remediation...'
+                    };
+                    return prompts[this.activePhase] || 'Ask me anything about security testing...';
+                },
+
+                get phaseScans() {
+                    const phaseTools = {
+                        recon: ['nmap', 'theHarvester', 'amass', 'whatweb', 'whois'],
+                        scanning: ['nmap', 'masscan', 'enum4linux', 'gobuster'],
+                        vuln: ['nikto', 'nuclei', 'sqlmap', 'searchsploit'],
+                        exploit: ['hydra', 'metasploit'],
+                        report: [],
+                        retest: []
+                    };
+                    const tools = phaseTools[this.activePhase] || [];
+                    return this.scans.filter(s => tools.includes(s.tool));
+                },
+
+                async checkStatus() {
+                    try {
+                        const response = await fetch('/api/status');
+                        const data = await response.json();
+                        this.services = data.services;
+                    } catch (e) { console.error('Failed to check status:', e); }
+                },
+
+                async checkRunningProcesses() {
+                    try {
+                        const response = await fetch('/api/processes');
+                        const data = await response.json();
+                        this.runningProcesses = data.running_processes || [];
+                    } catch (e) { console.error('Failed to check processes:', e); }
+                },
+
+                async loadProviders() {
+                    try {
+                        const response = await fetch('/api/providers');
+                        this.providers = await response.json();
+                        this.updateModels();
+                    } catch (e) { console.error('Failed to load providers:', e); }
+                },
+
+                updateModels() {
+                    if (this.providers[this.selectedProvider]) {
+                        this.availableModels = this.providers[this.selectedProvider].models || [];
+                        this.selectedModel = this.availableModels[0] || '';
+                    }
+                },
+
+                async sendMessage() {
+                    if (!this.userInput.trim() || this.isLoading) return;
+                    const message = this.userInput;
+                    this.userInput = '';
+                    this.messages.push({ role: 'user', content: message });
+                    this.isLoading = true;
+                    this.scrollToBottom('chatContainer');
+                    
+                    try {
+                        const response = await fetch('/api/chat/phase', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                message: message,
+                                phase: this.activePhase,
+                                provider: this.selectedProvider,
+                                model: this.selectedModel,
+                                findings: this.findings
+                            })
+                        });
+                        
+                        const data = await response.json();
+                        const aiMessage = { 
+                            role: 'assistant', 
+                            content: data.content || 'Sorry, I encountered an error.',
+                            phase: this.getCurrentPhase().name,
+                            risk_score: data.risk_score,
+                            findings: data.findings
+                        };
+                        this.messages.push(aiMessage);
+                        if (data.findings && data.findings.length > 0) {
+                            this.findings = [...this.findings, ...data.findings];
+                        }
+                    } catch (e) {
+                        this.messages.push({ 
+                            role: 'assistant', 
+                            content: '❌ Failed to connect to the backend service.',
+                            phase: this.getCurrentPhase().name
+                        });
+                    }
+                    this.isLoading = false;
+                    this.scrollToBottom('chatContainer');
+                },
+
+                async executeCommand() {
+                    if (!this.terminalInput.trim() || this.terminalLoading) return;
+                    const command = this.terminalInput;
+                    this.commandHistory.unshift(command);
+                    this.historyIndex = -1;
+                    this.terminalInput = '';
+                    this.terminalHistory.push({ type: 'cmd', content: command });
+                    this.terminalLoading = true;
+                    this.scrollToBottom('terminalOutput');
+                    
+                    try {
+                        const response = await fetch('/api/execute', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ command: command, timeout: 300 })
+                        });
+                        const data = await response.json();
+                        if (data.stdout) this.terminalHistory.push({ type: 'stdout', content: data.stdout });
+                        if (data.stderr) this.terminalHistory.push({ type: 'stderr', content: data.stderr });
+                        if (data.exit_code !== 0) this.terminalHistory.push({ type: 'info', content: `Exit code: ${data.exit_code}` });
+                    } catch (e) {
+                        this.terminalHistory.push({ type: 'stderr', content: 'Failed to execute command: ' + e.message });
+                    }
+                    this.terminalLoading = false;
+                    this.scrollToBottom('terminalOutput');
+                },
+
+                historyUp() {
+                    if (this.historyIndex < this.commandHistory.length - 1) {
+                        this.historyIndex++;
+                        this.terminalInput = this.commandHistory[this.historyIndex];
+                    }
+                },
+
+                historyDown() {
+                    if (this.historyIndex > 0) {
+                        this.historyIndex--;
+                        this.terminalInput = this.commandHistory[this.historyIndex];
+                    } else if (this.historyIndex === 0) {
+                        this.historyIndex = -1;
+                        this.terminalInput = '';
+                    }
+                },
+
+                executeQuickAction(action) {
+                    if (action.tool) {
+                        this.showScanModal(action.tool, action.scanType);
+                    } else if (action.prompt) {
+                        this.userInput = action.prompt;
+                        this.activeTab = 'phase';
+                        this.sendMessage();
+                    } else if (action.command) {
+                        this.terminalInput = action.command;
+                        this.activeTab = 'terminal';
+                    }
+                },
+
+                showScanModal(tool, scanType) {
+                    const toolConfig = {
+                        nmap: ['quick', 'full', 'stealth', 'vuln'],
+                        nikto: ['default', 'ssl', 'full'],
+                        gobuster: ['dir', 'dns'],
+                        sqlmap: ['test', 'dbs'],
+                        whatweb: ['default', 'aggressive'],
+                        amass: ['default'],
+                        hydra: ['default']
+                    };
+                    this.scanModal = { tool, target: '', scanType, types: toolConfig[tool] || [scanType] };
+                    this.scanModalOpen = true;
+                },
+
+                async startScan() {
+                    if (!this.scanModal.target) return;
+                    try {
+                        const response = await fetch('/api/scan', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                tool: this.scanModal.tool,
+                                target: this.scanModal.target,
+                                scan_type: this.scanModal.scanType
+                            })
+                        });
+                        const data = await response.json();
+                        this.scanModalOpen = false;
+                        await this.refreshScans();
+                        this.messages.push({
+                            role: 'assistant',
+                            phase: this.getCurrentPhase().name,
+                            content: `🔄 Started **${this.scanModal.tool}** scan on \`${this.scanModal.target}\`\n\nScan ID: \`${data.scan_id}\``
+                        });
+                    } catch (e) { console.error('Failed to start scan:', e); }
+                },
+
+                async refreshScans() {
+                    try {
+                        const response = await fetch('/api/scans');
+                        this.scans = await response.json();
+                        this.scans.filter(s => s.status === 'completed' && s.parsed).forEach(scan => {
+                            if (scan.parsed.findings) {
+                                scan.parsed.findings.forEach(f => {
+                                    if (!this.findings.find(existing => existing.raw === f.raw)) {
+                                        this.findings.push({ id: `${scan.scan_id}-${this.findings.length}`, ...f, tool: scan.tool, target: scan.target });
+                                    }
+                                });
+                            }
+                        });
+                    } catch (e) { console.error('Failed to load scans:', e); }
+                },
+
+                async pollScan(scanId) {
+                    try {
+                        const response = await fetch(`/api/scan/${scanId}`);
+                        const scan = await response.json();
+                        const index = this.scans.findIndex(s => s.scan_id === scanId);
+                        if (index !== -1) this.scans[index] = scan;
+                    } catch (e) { console.error('Failed to poll scan:', e); }
+                },
+
+                async pollRunningScans() {
+                    for (const scan of this.scans) {
+                        if (scan.status === 'running' || scan.status === 'pending') await this.pollScan(scan.scan_id);
+                    }
+                },
+
+                viewScanDetails(scan) { this.selectedScan = scan; this.detailsModalOpen = true; },
+
+                askAboutTool(tool) {
+                    this.activeTab = 'phase';
+                    this.userInput = `Explain how to use ${tool.name} for ${this.getCurrentPhase().name.toLowerCase()}. Include common options and example commands.`;
+                    this.sendMessage();
+                },
+
+                async analyzeAttackChains() {
+                    if (this.findings.length === 0) return;
+                    this.isLoading = true;
+                    try {
+                        const response = await fetch('/api/attack-chains', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ findings: this.findings, provider: this.selectedProvider, model: this.selectedModel })
+                        });
+                        const data = await response.json();
+                        this.attackChains = data.attack_chains || [];
+                        this.activeTab = 'attack-chains';
+                    } catch (e) { console.error('Failed to analyze attack chains:', e); }
+                    this.isLoading = false;
+                },
+
+                countBySeverity(severity) { return this.findings.filter(f => f.severity === severity).length; },
+
+                getSeverityBadgeClass(severity) {
+                    const classes = {
+                        critical: 'bg-sev-critical/20 text-sev-critical border border-sev-critical/50',
+                        high: 'bg-sev-high/20 text-sev-high border border-sev-high/50',
+                        medium: 'bg-sev-medium/20 text-sev-medium border border-sev-medium/50',
+                        low: 'bg-sev-low/20 text-sev-low border border-sev-low/50',
+                        info: 'bg-sev-info/20 text-sev-info border border-sev-info/50'
+                    };
+                    return classes[severity] || classes.info;
+                },
+
+                getRiskColor(score) {
+                    if (score >= 9) return 'bg-sev-critical/20 text-sev-critical border border-sev-critical/50';
+                    if (score >= 7) return 'bg-sev-high/20 text-sev-high border border-sev-high/50';
+                    if (score >= 4) return 'bg-sev-medium/20 text-sev-medium border border-sev-medium/50';
+                    return 'bg-sev-low/20 text-sev-low border border-sev-low/50';
+                },
+
+                getRiskLabel(score) {
+                    if (score >= 9) return 'CRITICAL';
+                    if (score >= 7) return 'HIGH';
+                    if (score >= 4) return 'MEDIUM';
+                    return 'LOW';
+                },
+
+                renderMarkdown(content) { return marked.parse(content || ''); },
+
+                scrollToBottom(containerId) {
+                    this.$nextTick(() => {
+                        const container = document.getElementById(containerId);
+                        if (container) container.scrollTop = container.scrollHeight;
+                    });
+                }
+            }
+        }
+    </script>
+</body>
+</html>

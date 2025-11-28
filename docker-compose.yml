@@ -1,0 +1,118 @@
+services:
+  # Web Dashboard - Main user interface
+  dashboard:
+    build:
+      context: ./services/dashboard
+      dockerfile: Dockerfile
+    container_name: strikepackage-dashboard
+    ports:
+      - "8080:8080"
+    environment:
+      - HACKGPT_API_URL=http://strikepackage-hackgpt-api:8001
+      - LLM_ROUTER_URL=http://strikepackage-llm-router:8000
+      - KALI_EXECUTOR_URL=http://strikepackage-kali-executor:8002
+    depends_on:
+      - hackgpt-api
+      - llm-router
+    networks:
+      - strikepackage-net
+    restart: unless-stopped
+
+  # HackGPT API - Security-focused API service
+  hackgpt-api:
+    build:
+      context: ./services/hackgpt-api
+      dockerfile: Dockerfile
+    container_name: strikepackage-hackgpt-api
+    ports:
+      - "8001:8001"
+    environment:
+      - LLM_ROUTER_URL=http://strikepackage-llm-router:8000
+      - KALI_EXECUTOR_URL=http://strikepackage-kali-executor:8002
+    depends_on:
+      - llm-router
+      - kali-executor
+    networks:
+      - strikepackage-net
+    restart: unless-stopped
+
+  # Kali Executor - Command execution service
+  kali-executor:
+    build:
+      context: ./services/kali-executor
+      dockerfile: Dockerfile
+    container_name: strikepackage-kali-executor
+    ports:
+      - "8002:8002"
+    environment:
+      - KALI_CONTAINER_NAME=strikepackage-kali
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - kali
+    networks:
+      - strikepackage-net
+    restart: unless-stopped
+
+  # LLM Router - Routes to different LLM providers
+  llm-router:
+    build:
+      context: ./services/llm-router
+      dockerfile: Dockerfile
+    container_name: strikepackage-llm-router
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://192.168.1.50:11434}
+    networks:
+      - strikepackage-net
+    restart: unless-stopped
+
+  # Kali Linux - Security tools container
+  kali:
+    build:
+      context: ./services/kali
+      dockerfile: Dockerfile
+    container_name: strikepackage-kali
+    stdin_open: true
+    tty: true
+    volumes:
+      - kali-workspace:/workspace
+      - ./data:/data
+    networks:
+      - strikepackage-net
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped
+
+  # Ollama - Local LLM (disabled - using Dell LLM box at 192.168.1.50)
+  # Uncomment to use local Ollama instead
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: strikepackage-ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-models:/root/.ollama
+  #   networks:
+  #     - strikepackage-net
+  #   restart: unless-stopped
+  #   # Uncomment for GPU support:
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - driver: nvidia
+  #   #           count: all
+  #   #           capabilities: [gpu]
+
+networks:
+  strikepackage-net:
+    driver: bridge
+
+volumes:
+  kali-workspace:
+  ollama-models:
