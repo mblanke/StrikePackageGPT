@@ -1,4 +1,4 @@
-name: Unpack files.zip
+name: Unpack files.zip (create branch + PR)
 
 on:
   workflow_dispatch:
@@ -6,52 +6,114 @@ on:
       branch:
         description: 'Branch containing files.zip'
         required: true
-        default: 'c2-integration'
+        default: 'C2-integration'
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
-  unpack:
+  unpack-and-pr:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout branch
+      # ---------------------------------------------------------
+      # 0. Checkout the target branch ONLY — prevents recursion
+      # ---------------------------------------------------------
+      - name: Checkout target branch
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch }}
+          fetch-depth: 0
           persist-credentials: true
 
-      - name: Ensure unzip available
-        run: sudo apt-get update -y && sudo apt-get install -y unzip rsync
-
-      - name: Verify files.zip exists
+      - name: Install tools
         run: |
-          if [ ! -f files.zip ]; then
-            echo "ERROR: files.zip not found in repo root on branch ${{ github.event.inputs.branch }}"
+          sudo apt-get update -y
+          sudo apt-get install -y unzip rsync jq
+
+      # ---------------------------------------------------------
+      # 1. Verify files.zip exists in branch root
+      # ---------------------------------------------------------
+      - name: Check for files.zip
+        run: |
+          if [ ! -f "files.zip" ]; then
+            echo "::error ::files.zip not found in root of branch ${{ github.event.inputs.branch }}"
             exit 1
           fi
-          echo "files.zip found:" && ls -lh files.zip
+          echo "Found files.zip:"
+          ls -lh files.zip
 
-      - name: Unpack files.zip
+      # ---------------------------------------------------------
+      # 2. Unzip files into extracted/
+      # ---------------------------------------------------------
+      - name: Extract zip
         run: |
           rm -rf extracted
-          mkdir -p extracted
+          mkdir extracted
           unzip -o files.zip -d extracted
-          echo "Sample extracted files:"
-          find extracted -maxdepth 3 -type f | sed -n '1,200p'
+          echo "Extracted files sample:"
+          find extracted -type f | sed -n '1,50p'
 
-      - name: Copy extracted files into repository
+      # ---------------------------------------------------------
+      # 3. Copy extracted files into root of repo
+      # ---------------------------------------------------------
+      - name: Copy extracted contents
         run: |
-          rsync -a --exclude='.git' extracted/ .
+          rsync -a extracted/ . --exclude='.git'
 
-      - name: Commit and push changes (if any)
-        env:
-          BRANCH: ${{ github.event.inputs.branch }}
+      # ---------------------------------------------------------
+      # 4. Detect changes and create commit branch
+      # ---------------------------------------------------------
+      - name: Commit changes if any
+        id: gitops
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
+
+          if git status --porcelain | grep -q . ; then
+            BRANCH="unpacked-${{ github.event.inputs.branch }}-$(date +%s)"
+            git checkout -b "$BRANCH"
+            git add -A
+            git commit -m "Unpacked files.zip automatically"
+            echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           else
-            git commit -m "Unpack files.zip into branch ${BRANCH} via workflow"
-            git push origin "HEAD:${BRANCH}"
-            echo "Changes pushed."
+            echo "nochanges=true" >> $GITHUB_OUTPUT
+          fi
+
+      # ---------------------------------------------------------
+      # 5. Push branch only if changes exist
+      # ---------------------------------------------------------
+      - name: Push branch
+        if: steps.gitops.outputs.nochanges != 'true'
+        run: |
+          git push --set-upstream origin "${{ steps.gitops.outputs.branch }}"
+
+      # ---------------------------------------------------------
+      # 6. Open PR only if changes exist
+      # ---------------------------------------------------------
+      - name: Open Pull Request
+        if: steps.gitops.outputs.nochanges != 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: "Automated unpack of files.zip into ${{ github.event.inputs.branch }}"
+          body: |
+            This PR was automatically generated.
+
+            **Action:** Unpacked `files.zip` from branch `${{ github.event.inputs.branch }}`.
+            **Branch:** `${{ steps.gitops.outputs.branch }}`
+          base: ${{ github.event.inputs.branch }}
+          head: ${{ steps.gitops.outputs.branch }}
+          draft: false
+
+      # ---------------------------------------------------------
+      # 7. Final log
+      # ---------------------------------------------------------
+      - name: Done
+        run: |
+          if [ "${{ steps.gitops.outputs.nochanges }}" = "true" ]; then
+            echo "No changes detected. Nothing to commit."
+          else
+            echo "PR created successfully."
           fi
