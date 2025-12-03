@@ -195,8 +195,21 @@ def _check_common_issues(config_data: Dict[str, Any]) -> Tuple[List[str], List[s
     errors = []
     warnings = []
     
+    # Validate that config_data is a dict and not too large
+    if not isinstance(config_data, dict):
+        errors.append("Configuration must be a dictionary")
+        return errors, warnings
+    
+    if len(config_data) > 1000:
+        warnings.append("Configuration has unusually large number of keys (>1000)")
+    
     # Check for null/undefined values
     for key, value in config_data.items():
+        # Validate key is a string
+        if not isinstance(key, str):
+            warnings.append(f"Configuration key {key} is not a string")
+            continue
+        
         if value is None:
             warnings.append(f"Value for '{key}' is null - will use default")
     

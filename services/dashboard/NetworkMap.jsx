@@ -39,11 +39,18 @@ const NetworkMap = ({ scanId, onNodeClick }) => {
   };
 
   const initializeNetwork = () => {
-    // NOTE: This requires cytoscape.js to be installed: npm install cytoscape
-    // import cytoscape from 'cytoscape';
+    // NOTE: This component is a template for network visualization.
+    // To use it, you must:
+    // 1. Install cytoscape: npm install cytoscape
+    // 2. Uncomment the code below and add the import at the top
+    // 3. Build your React application with a bundler (webpack, vite, etc.)
+    //
+    // For a simpler integration without React build system, see INTEGRATION_EXAMPLE.md
     
     // Example initialization (requires actual cytoscape import)
     /*
+    import cytoscape from 'cytoscape';
+    
     const cy = cytoscape({
       container: containerRef.current,
       elements: buildGraphElements(hosts),

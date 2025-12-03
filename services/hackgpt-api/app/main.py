@@ -1057,14 +1057,14 @@ async def get_nmap_hosts(scan_id: Optional[str] = None):
 # ============== Voice Control Endpoints ==============
 
 @app.post("/api/voice/transcribe")
-async def transcribe_audio(audio: bytes = None):
+async def transcribe_audio(audio_data: Optional[bytes] = None):
     """Transcribe audio to text using Whisper"""
-    if not audio:
+    if not audio_data:
         raise HTTPException(status_code=400, detail="No audio data provided")
     
     try:
         from . import voice
-        result = voice.transcribe_audio(audio)
+        result = voice.transcribe_audio(audio_data)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Transcription error: {str(e)}")
