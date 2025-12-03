@@ -11,7 +11,10 @@ import json
 
 
 # Store conversation history per session
+# Note: In production, use Redis or similar with TTL for scalability
+# This simple in-memory dict will grow unbounded - implement cleanup as needed
 conversation_contexts: Dict[str, List[Dict[str, str]]] = {}
+MAX_SESSIONS = 1000  # Limit number of concurrent sessions
 
 
 async def chat_completion(
@@ -87,6 +90,11 @@ Always emphasize ethical hacking practices and legal considerations."""
                 # Store in conversation history
                 if session_id:
                     if session_id not in conversation_contexts:
+                        # Cleanup old sessions if limit reached
+                        if len(conversation_contexts) >= MAX_SESSIONS:
+                            # Remove oldest session (simple FIFO)
+                            oldest_session = next(iter(conversation_contexts))
+                            del conversation_contexts[oldest_session]
                         conversation_contexts[session_id] = []
                     conversation_contexts[session_id].append({"role": "user", "content": message})
                     conversation_contexts[session_id].append({"role": "assistant", "content": assistant_message})

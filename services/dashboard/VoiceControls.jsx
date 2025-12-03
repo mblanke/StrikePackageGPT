@@ -22,7 +22,9 @@ const VoiceControls = ({ onCommand, hotkey = ' ' }) => {
       return;
     }
 
-    // Request microphone permission
+    // Note: We request permission on mount for better UX.
+    // Alternative: Request only on first use by removing this and letting
+    // startListening() handle the permission request
     requestMicrophonePermission();
 
     // Setup hotkey listener

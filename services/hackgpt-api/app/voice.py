@@ -91,8 +91,8 @@ def _transcribe_with_local_whisper(audio_data: bytes, format: str) -> Dict[str, 
             # Clean up temp file
             try:
                 os.unlink(temp_audio_path)
-            except:
-                pass
+            except (OSError, FileNotFoundError) as e:
+                print(f"Warning: Could not delete temp file: {e}")
                 
     except ImportError:
         raise Exception("Whisper not installed. Install with: pip install openai-whisper")

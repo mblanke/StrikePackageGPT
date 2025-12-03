@@ -467,7 +467,10 @@ def _is_valid_target(target: str) -> bool:
     ip_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
     if re.match(ip_pattern, target):
         parts = target.split('.')
-        return all(0 <= int(part) <= 255 for part in parts)
+        try:
+            return all(0 <= int(part) <= 255 for part in parts)
+        except ValueError:
+            return False
     
     # CIDR notation
     if '/' in target:
@@ -522,7 +525,10 @@ def _is_valid_ip_or_hostname(host: str) -> bool:
     ip_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
     if re.match(ip_pattern, host):
         parts = host.split('.')
-        return all(0 <= int(part) <= 255 for part in parts)
+        try:
+            return all(0 <= int(part) <= 255 for part in parts)
+        except ValueError:
+            return False
     
     # Hostname
     hostname_pattern = r'^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$'
