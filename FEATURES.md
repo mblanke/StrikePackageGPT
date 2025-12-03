@@ -434,8 +434,9 @@ Returns: { title, description, tips, example }
 
 ```
 POST /api/llm/chat
-Body: { message: string, session_id?: string, context?: string }
+Body: { message: string, session_id?: string, context?: string, provider?: string, model?: string }
 Returns: { message: string, success: boolean }
+Note: If provider/model not specified, uses default preferences
 
 GET /api/llm/autocomplete?partial_text=...&context_type=...
 Returns: { suggestions: [...] }
@@ -443,7 +444,20 @@ Returns: { suggestions: [...] }
 POST /api/llm/explain
 Body: { item: string, item_type?: string, context?: {...} }
 Returns: { explanation: string, item_type: string }
+
+GET /api/llm/preferences
+Returns: { current: { provider: string, model: string }, available_providers: [...] }
+
+POST /api/llm/preferences
+Body: { provider: string, model: string }
+Returns: { status: string, provider: string, model: string, message: string }
 ```
+
+**LLM Provider Selection:**
+- Set default LLM provider and model via environment variables: `DEFAULT_LLM_PROVIDER`, `DEFAULT_LLM_MODEL`
+- Change defaults at runtime via `/api/llm/preferences` endpoint
+- Override per-request by specifying `provider` and `model` in request body
+- Available providers: `ollama`, `ollama-local`, `ollama-network`, `openai`, `anthropic`
 
 ### Config Validation
 
