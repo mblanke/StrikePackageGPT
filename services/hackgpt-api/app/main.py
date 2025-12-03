@@ -729,6 +729,85 @@ async def clear_scans():
     return {"status": "cleared", "message": "All scan history cleared"}
 
 
+# ============== Interactive Command Capture ==============
+
+@app.get("/commands/captured")
+async def get_captured_commands(limit: int = 50, since: Optional[str] = None):
+    """
+    Get commands that were run directly in the Kali container.
+    These are captured via the command logging system in interactive shells.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{KALI_EXECUTOR_URL}/captured_commands",
+                params={"limit": limit, "since": since} if since else {"limit": limit},
+                timeout=10.0
+            )
+            
+            if response.status_code != 200:
+                return {"commands": [], "error": "Could not retrieve captured commands"}
+            
+            captured = response.json()
+            commands = captured.get("commands", [])
+            
+            # Import captured commands into scan_results for unified history
+            for cmd in commands:
+                cmd_id = cmd.get("command_id")
+                if cmd_id and cmd_id not in scan_results:
+                    scan_results[cmd_id] = {
+                        "scan_id": cmd_id,
+                        "tool": cmd.get("command", "").split()[0] if cmd.get("command") else "unknown",
+                        "target": "interactive",
+                        "scan_type": "manual",
+                        "command": cmd.get("command"),
+                        "status": cmd.get("status", "completed"),
+                        "started_at": cmd.get("timestamp"),
+                        "completed_at": cmd.get("completed_at"),
+                        "result": {
+                            "stdout": cmd.get("stdout", ""),
+                            "stderr": cmd.get("stderr", ""),
+                            "exit_code": cmd.get("exit_code"),
+                            "duration": cmd.get("duration")
+                        },
+                        "source": cmd.get("source", "interactive_shell"),
+                        "user": cmd.get("user"),
+                        "working_dir": cmd.get("working_dir")
+                    }
+                    
+                    # Parse output if available
+                    if cmd.get("stdout"):
+                        tool = cmd.get("command", "").split()[0]
+                        parsed = parse_tool_output(tool, cmd.get("stdout", ""))
+                        scan_results[cmd_id]["parsed"] = parsed
+            
+            return {
+                "commands": commands,
+                "count": len(commands),
+                "imported_to_history": True,
+                "message": "Captured commands are now visible in scan history"
+            }
+            
+    except httpx.ConnectError:
+        return {"commands": [], "error": "Kali executor service not available"}
+    except Exception as e:
+        return {"commands": [], "error": str(e)}
+
+
+@app.post("/commands/sync")
+async def sync_captured_commands():
+    """
+    Sync all captured commands from the Kali container into the unified scan history.
+    This allows commands run directly in the container to appear in the dashboard.
+    """
+    result = await get_captured_commands(limit=1000)
+    return {
+        "status": "synced",
+        "imported_count": result.get("count", 0),
+        "message": "All captured commands are now visible in dashboard history"
+    }
+
+
 # ============== Output Parsing ==============
 
 def parse_tool_output(tool: str, output: str) -> Dict[str, Any]:

@@ -14,6 +14,7 @@ StrikePackageGPT provides security researchers and penetration testers with an A
 - **Vulnerability Analysis** - CVE research, misconfiguration detection
 - **Exploit Research** - Safe research and documentation of exploits
 - **Report Generation** - Professional security assessment reports
+- **🆕 Bidirectional Command Capture** - Run commands in CLI, see results in dashboard
 
 ## 🚀 Quick Start
 
@@ -83,6 +84,35 @@ Access the Kali container:
 ```bash
 docker exec -it strikepackage-kali bash
 ```
+
+### 🔄 Bidirectional Command Capture
+
+**New Feature!** Commands run directly in the Kali container are now automatically captured and visible in the dashboard:
+
+```bash
+# Connect to container
+docker exec -it strikepackage-kali bash
+
+# Run commands normally - they're automatically logged
+nmap -sV 192.168.1.0/24
+
+# Use 'capture' for full output capture
+capture sqlmap -u "http://example.com?id=1" --batch
+
+# View recent commands
+recent
+
+# All commands appear in dashboard history! 🎉
+```
+
+**Benefits:**
+- ✅ Use CLI for speed, GUI for visualization
+- ✅ Perfect for advanced users who prefer terminal
+- ✅ Unified history across all command sources
+- ✅ Network map includes manually-run scans
+- ✅ Complete audit trail for reporting
+
+See `BIDIRECTIONAL_CAPTURE.md` for full documentation.
 
 ## 🤖 LLM Providers
 
