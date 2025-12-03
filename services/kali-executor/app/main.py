@@ -17,23 +17,55 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 # Allowed command prefixes (security whitelist)
+# Expanded to support all Kali tools
 ALLOWED_COMMANDS = {
     # Reconnaissance
     "nmap", "masscan", "amass", "theharvester", "whatweb", "dnsrecon", "fierce",
-    "dig", "nslookup", "host", "whois",
+    "dig", "nslookup", "host", "whois", "recon-ng", "maltego", "dmitry", "dnsenum",
+    "enum4linux", "nbtscan", "onesixtyone", "smbclient", "snmp-check", "wafw00f",
     # Web testing
-    "nikto", "gobuster", "dirb", "sqlmap", "wpscan", "curl", "wget",
+    "nikto", "gobuster", "dirb", "sqlmap", "wpscan", "curl", "wget", "burpsuite",
+    "zaproxy", "zap-cli", "wfuzz", "ffuf", "dirbuster", "cadaver", "davtest",
+    "skipfish", "uniscan", "whatweb", "wapiti", "commix", "joomscan", "droopescan",
+    # Wireless
+    "aircrack-ng", "airodump-ng", "aireplay-ng", "airmon-ng", "airbase-ng",
+    "wifite", "reaver", "bully", "kismet", "fern-wifi-cracker", "wash", "cowpatty",
+    "mdk3", "mdk4", "pixiewps", "wifiphisher", "eaphammer", "hostapd-wpe",
+    # Password attacks
+    "hydra", "medusa", "john", "hashcat", "ncrack", "patator", "ophcrack",
+    "crunch", "cewl", "rsmangler", "hashid", "hash-identifier",
     # Network utilities
-    "ping", "traceroute", "netcat", "nc", "tcpdump",
-    # Exploitation research
-    "searchsploit", "msfconsole", "msfvenom",
-    # Brute force
-    "hydra", "medusa",
+    "ping", "traceroute", "netcat", "nc", "tcpdump", "wireshark", "tshark",
+    "ettercap", "bettercap", "responder", "arpspoof", "dnsspoof", "macchanger",
+    "hping3", "arping", "fping", "masscan-web", "unicornscan",
+    # Exploitation
+    "searchsploit", "msfconsole", "msfvenom", "exploit", "armitage",
+    "beef-xss", "set", "setoolkit", "backdoor-factory", "shellnoob",
+    "commix", "routersploit", "linux-exploit-suggester",
+    # Post-exploitation
+    "mimikatz", "powersploit", "empire", "covenant", "crackmapexec", "cme",
+    "impacket-smbserver", "impacket-psexec", "evil-winrm", "bloodhound",
+    "sharphound", "powershell", "pwsh",
+    # Forensics
+    "autopsy", "volatility", "sleuthkit", "foremost", "binwalk", "bulk-extractor",
+    "scalpel", "dc3dd", "guymager", "chkrootkit", "rkhunter",
+    # Reverse engineering
+    "ghidra", "radare2", "r2", "gdb", "objdump", "strings", "ltrace", "strace",
+    "hexdump", "xxd", "file", "readelf", "checksec", "pwntools",
+    # Sniffing
+    "dsniff", "tcpflow", "tcpreplay", "tcpick", "ngrep", "p0f", "ssldump",
     # System info
     "ls", "cat", "head", "tail", "grep", "find", "pwd", "whoami", "id",
-    "uname", "hostname", "ip", "ifconfig", "netstat", "ss",
+    "uname", "hostname", "ip", "ifconfig", "netstat", "ss", "route",
+    # Analysis tools
+    "exiftool", "pdfid", "pdf-parser", "peepdf", "oletools", "olevba",
+    # VPN/Tunneling
+    "openvpn", "ssh", "sshuttle", "proxychains", "tor", "socat",
+    # Misc security tools
+    "openssl", "gpg", "steghide", "outguess", "covert", "stegosuite",
+    "yersinia", "responder", "chisel", "ligolo", "sliver",
     # Python scripts
-    "python", "python3",
+    "python", "python3", "python2",
 }
 
 # Blocked patterns (dangerous commands)

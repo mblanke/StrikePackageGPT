@@ -18,13 +18,15 @@ This guide walks you through installing and setting up the new features added to
 ### Required
 - **Docker & Docker Compose** - Already installed if you're using StrikePackageGPT
 - **Python 3.12+** - Included in the containers
-- **8GB+ RAM** - For running the services
+- **16GB+ RAM** - Recommended for running services + full Kali tools (8GB minimum)
+- **20GB+ Disk Space** - For complete Kali Linux tool suite (kali-linux-everything)
 
 ### Optional (for enhanced features)
 - **Node.js & npm** - Only if you want to build React components from source
 - **NVIDIA GPU** - For faster local Whisper transcription
 - **OpenAI API Key** - For cloud-based voice and LLM features
 - **Anthropic API Key** - For Claude LLM support
+- **Physical WiFi Adapter** - For wireless penetration testing (requires USB passthrough)
 
 ---
 
@@ -36,10 +38,12 @@ This gets you running with **all backend features** and **basic frontend** (no b
 
 ```bash
 cd /path/to/StrikePackageGPT
-docker-compose up -d
+docker-compose up -d --build
 ```
 
 This starts all services including the new API endpoints.
+
+**Note:** First-time build will take 20-30 minutes as it installs the complete Kali Linux tool suite (600+ tools, ~10GB download). Subsequent starts are instant.
 
 ### Step 2: Verify Installation
 
@@ -78,7 +82,33 @@ http://localhost:8080/static/unknown.svg
 http://localhost:8080
 ```
 
-**That's it for basic setup!** All backend features are now available via API endpoints.
+### Step 5: Access All Kali Tools
+
+The Kali container now includes **ALL 600+ Kali Linux tools** via the `kali-linux-everything` metapackage:
+
+```bash
+# Access the Kali container
+docker exec -it strikepackage-kali bash
+
+# Available tools include:
+# - Reconnaissance: nmap, masscan, recon-ng, maltego, amass
+# - Web Testing: burpsuite, zaproxy, sqlmap, nikto, wpscan
+# - Wireless: aircrack-ng, wifite, reaver, kismet
+# - Password Attacks: john, hashcat, hydra, medusa
+# - Exploitation: metasploit, searchsploit, armitage
+# - Post-Exploitation: mimikatz, bloodhound, crackmapexec
+# - Forensics: autopsy, volatility, sleuthkit
+# - Reverse Engineering: ghidra, radare2, gdb
+# - And 500+ more tools!
+
+# Example: Run aircrack-ng
+aircrack-ng --help
+
+# Example: Use wifite
+wifite --help
+```
+
+**That's it for basic setup!** All backend features and 600+ Kali tools are now available.
 
 ---
 

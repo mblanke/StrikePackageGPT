@@ -3,41 +3,10 @@ FROM kalilinux/kali-rolling
 # Avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Update and install essential security tools
+# Update and install ALL Kali tools
+# Using kali-linux-everything metapackage for complete tool suite
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Core utilities
-    curl \
-    wget \
-    git \
-    vim \
-    net-tools \
-    iputils-ping \
-    dnsutils \
-    # Reconnaissance tools
-    nmap \
-    masscan \
-    amass \
-    theharvester \
-    whatweb \
-    dnsrecon \
-    fierce \
-    # Web testing tools
-    nikto \
-    gobuster \
-    dirb \
-    sqlmap \
-    # Network tools
-    netcat-openbsd \
-    tcpdump \
-    wireshark-common \
-    hydra \
-    # Exploitation
-    metasploit-framework \
-    exploitdb \
-    # Scripting
-    python3 \
-    python3-pip \
-    python3-venv \
+    kali-linux-everything \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
