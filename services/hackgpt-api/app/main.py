@@ -32,10 +32,18 @@ app.add_middleware(
 LLM_ROUTER_URL = os.getenv("LLM_ROUTER_URL", "http://strikepackage-llm-router:8000")
 KALI_EXECUTOR_URL = os.getenv("KALI_EXECUTOR_URL", "http://strikepackage-kali-executor:8002")
 
+# Default LLM Configuration (can be overridden via environment or API)
+DEFAULT_LLM_PROVIDER = os.getenv("DEFAULT_LLM_PROVIDER", "ollama")
+DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "llama3.2")
+
 # In-memory storage (use Redis in production)
 tasks: Dict[str, Any] = {}
 sessions: Dict[str, Dict] = {}
 scan_results: Dict[str, Any] = {}
+llm_preferences: Dict[str, Any] = {
+    "provider": DEFAULT_LLM_PROVIDER,
+    "model": DEFAULT_LLM_MODEL
+}
 
 
 # ============== Models ==============
@@ -50,22 +58,27 @@ class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
     context: Optional[str] = None
-    provider: str = "ollama"
-    model: str = "llama3.2"
+    provider: Optional[str] = None  # None means use default
+    model: Optional[str] = None  # None means use default
 
 
 class PhaseChatRequest(BaseModel):
     message: str
     phase: str
-    provider: str = "ollama"
-    model: str = "llama3.2"
+    provider: Optional[str] = None  # None means use default
+    model: Optional[str] = None  # None means use default
     findings: List[Dict[str, Any]] = []
 
 
 class AttackChainRequest(BaseModel):
     findings: List[Dict[str, Any]]
-    provider: str = "ollama"
-    model: str = "llama3.2"
+    provider: Optional[str] = None  # None means use default
+    model: Optional[str] = None  # None means use default
+
+
+class LLMPreferencesRequest(BaseModel):
+    provider: str
+    model: str
 
 
 class CommandRequest(BaseModel):
@@ -335,7 +348,7 @@ async def health_check():
 
 @app.post("/chat")
 async def security_chat(request: ChatRequest):
-    """Chat with security-focused AI assistant"""
+    """Chat with security-focused AI assistant - uses default LLM preferences if not specified"""
     messages = [
         {
             "role": "system",
@@ -357,8 +370,8 @@ vulnerabilities and defenses."""
             response = await client.post(
                 f"{LLM_ROUTER_URL}/chat",
                 json={
-                    "provider": request.provider,
-                    "model": request.model,
+                    "provider": request.provider or llm_preferences["provider"],
+                    "model": request.model or llm_preferences["model"],
                     "messages": messages,
                     "temperature": 0.7,
                     "max_tokens": 2048
@@ -376,7 +389,7 @@ vulnerabilities and defenses."""
 
 @app.post("/chat/phase")
 async def phase_aware_chat(request: PhaseChatRequest):
-    """Phase-aware chat with context from current pentest phase"""
+    """Phase-aware chat with context from current pentest phase - uses default LLM preferences if not specified"""
     phase_prompt = PHASE_PROMPTS.get(request.phase, PHASE_PROMPTS["recon"])
     
     # Build context from findings if available
@@ -400,8 +413,8 @@ async def phase_aware_chat(request: PhaseChatRequest):
             response = await client.post(
                 f"{LLM_ROUTER_URL}/chat",
                 json={
-                    "provider": request.provider,
-                    "model": request.model,
+                    "provider": request.provider or llm_preferences["provider"],
+                    "model": request.model or llm_preferences["model"],
                     "messages": messages,
                     "temperature": 0.7,
                     "max_tokens": 2048
@@ -515,8 +528,8 @@ Only return valid JSON."""
             response = await client.post(
                 f"{LLM_ROUTER_URL}/chat",
                 json={
-                    "provider": request.provider,
-                    "model": request.model,
+                    "provider": request.provider or llm_preferences["provider"],
+                    "model": request.model or llm_preferences["model"],
                     "messages": messages,
                     "temperature": 0.3,
                     "max_tokens": 2048
@@ -729,6 +742,85 @@ async def clear_scans():
     return {"status": "cleared", "message": "All scan history cleared"}
 
 
+# ============== Interactive Command Capture ==============
+
+@app.get("/commands/captured")
+async def get_captured_commands(limit: int = 50, since: Optional[str] = None):
+    """
+    Get commands that were run directly in the Kali container.
+    These are captured via the command logging system in interactive shells.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{KALI_EXECUTOR_URL}/captured_commands",
+                params={"limit": limit, "since": since} if since else {"limit": limit},
+                timeout=10.0
+            )
+            
+            if response.status_code != 200:
+                return {"commands": [], "error": "Could not retrieve captured commands"}
+            
+            captured = response.json()
+            commands = captured.get("commands", [])
+            
+            # Import captured commands into scan_results for unified history
+            for cmd in commands:
+                cmd_id = cmd.get("command_id")
+                if cmd_id and cmd_id not in scan_results:
+                    scan_results[cmd_id] = {
+                        "scan_id": cmd_id,
+                        "tool": cmd.get("command", "").split()[0] if cmd.get("command") else "unknown",
+                        "target": "interactive",
+                        "scan_type": "manual",
+                        "command": cmd.get("command"),
+                        "status": cmd.get("status", "completed"),
+                        "started_at": cmd.get("timestamp"),
+                        "completed_at": cmd.get("completed_at"),
+                        "result": {
+                            "stdout": cmd.get("stdout", ""),
+                            "stderr": cmd.get("stderr", ""),
+                            "exit_code": cmd.get("exit_code"),
+                            "duration": cmd.get("duration")
+                        },
+                        "source": cmd.get("source", "interactive_shell"),
+                        "user": cmd.get("user"),
+                        "working_dir": cmd.get("working_dir")
+                    }
+                    
+                    # Parse output if available
+                    if cmd.get("stdout"):
+                        tool = cmd.get("command", "").split()[0]
+                        parsed = parse_tool_output(tool, cmd.get("stdout", ""))
+                        scan_results[cmd_id]["parsed"] = parsed
+            
+            return {
+                "commands": commands,
+                "count": len(commands),
+                "imported_to_history": True,
+                "message": "Captured commands are now visible in scan history"
+            }
+            
+    except httpx.ConnectError:
+        return {"commands": [], "error": "Kali executor service not available"}
+    except Exception as e:
+        return {"commands": [], "error": str(e)}
+
+
+@app.post("/commands/sync")
+async def sync_captured_commands():
+    """
+    Sync all captured commands from the Kali container into the unified scan history.
+    This allows commands run directly in the container to appear in the dashboard.
+    """
+    result = await get_captured_commands(limit=1000)
+    return {
+        "status": "synced",
+        "imported_count": result.get("count", 0),
+        "message": "All captured commands are now visible in dashboard history"
+    }
+
+
 # ============== Output Parsing ==============
 
 def parse_tool_output(tool: str, output: str) -> Dict[str, Any]:
@@ -840,7 +932,7 @@ def parse_gobuster_output(output: str) -> Dict[str, Any]:
 
 @app.post("/ai-scan")
 async def ai_assisted_scan(request: ChatRequest, background_tasks: BackgroundTasks):
-    """Use AI to determine and run appropriate scan."""
+    """Use AI to determine and run appropriate scan - uses default LLM preferences if not specified"""
     # Get AI suggestion
     messages = [
         {"role": "system", "content": SECURITY_PROMPTS["command_assist"]},
@@ -852,8 +944,8 @@ async def ai_assisted_scan(request: ChatRequest, background_tasks: BackgroundTas
             response = await client.post(
                 f"{LLM_ROUTER_URL}/chat",
                 json={
-                    "provider": request.provider,
-                    "model": request.model,
+                    "provider": request.provider or llm_preferences["provider"],
+                    "model": request.model or llm_preferences["model"],
                     "messages": messages,
                     "temperature": 0.3,
                     "max_tokens": 1024
@@ -916,8 +1008,8 @@ async def run_analysis(task_id: str, request: SecurityAnalysisRequest):
             response = await client.post(
                 f"{LLM_ROUTER_URL}/chat",
                 json={
-                    "provider": "ollama",
-                    "model": "llama3.2",
+                    "provider": llm_preferences["provider"],
+                    "model": llm_preferences["model"],
                     "messages": [
                         {"role": "system", "content": prompt},
                         {"role": "user", "content": f"Analyze target: {request.target}\nOptions: {request.options}"}
@@ -981,7 +1073,7 @@ async def list_tools():
 
 @app.post("/suggest-command")
 async def suggest_command(request: ChatRequest):
-    """Get AI-suggested security commands based on context"""
+    """Get AI-suggested security commands based on context - uses default LLM preferences if not specified"""
     messages = [
         {
             "role": "system",
@@ -1004,8 +1096,8 @@ Only suggest commands for legitimate security testing purposes."""
             response = await client.post(
                 f"{LLM_ROUTER_URL}/chat",
                 json={
-                    "provider": request.provider,
-                    "model": request.model,
+                    "provider": request.provider or llm_preferences["provider"],
+                    "model": request.model or llm_preferences["model"],
                     "messages": messages,
                     "temperature": 0.3,
                     "max_tokens": 1024
@@ -1019,6 +1111,378 @@ Only suggest commands for legitimate security testing purposes."""
             return response.json()
         except httpx.ConnectError:
             raise HTTPException(status_code=503, detail="LLM Router service not available")
+
+
+# ============== Nmap Parser Endpoints ==============
+
+@app.post("/api/nmap/parse")
+async def parse_nmap(format: str = "xml", content: str = ""):
+    """Parse Nmap output (XML or JSON)"""
+    try:
+        from . import nmap_parser
+        
+        if format == "xml":
+            hosts = nmap_parser.parse_nmap_xml(content)
+        elif format == "json":
+            hosts = nmap_parser.parse_nmap_json(content)
+        else:
+            raise HTTPException(status_code=400, detail="Format must be 'xml' or 'json'")
+        
+        return {"hosts": hosts, "count": len(hosts)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Parse error: {str(e)}")
+
+
+@app.get("/api/nmap/hosts")
+async def get_nmap_hosts(scan_id: Optional[str] = None):
+    """Get parsed host data for network map"""
+    # This could be extended to fetch from a database based on scan_id
+    # For now, return from the scan_results if available
+    if scan_id and scan_id in scan_results:
+        result = scan_results[scan_id]
+        hosts = result.get("parsed", {}).get("hosts", [])
+        return {"hosts": hosts}
+    
+    return {"hosts": [], "message": "No scan data available"}
+
+
+# ============== Voice Control Endpoints ==============
+
+@app.post("/api/voice/transcribe")
+async def transcribe_audio(audio_data: Optional[bytes] = None):
+    """Transcribe audio to text using Whisper"""
+    if not audio_data:
+        raise HTTPException(status_code=400, detail="No audio data provided")
+    
+    try:
+        from . import voice
+        result = voice.transcribe_audio(audio_data)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription error: {str(e)}")
+
+
+@app.post("/api/voice/speak")
+async def text_to_speech(text: str, voice_name: str = "alloy"):
+    """Convert text to speech"""
+    try:
+        from . import voice as voice_module
+        audio_bytes = voice_module.speak_text(text, voice=voice_name)
+        
+        if audio_bytes:
+            from fastapi.responses import Response
+            return Response(content=audio_bytes, media_type="audio/mp3")
+        else:
+            return {"message": "TTS not available, use browser fallback"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS error: {str(e)}")
+
+
+@app.post("/api/voice/command")
+async def process_voice_command(text: str):
+    """Parse and route voice command"""
+    try:
+        from . import voice as voice_module
+        
+        # Parse command
+        command_result = voice_module.parse_voice_command(text)
+        
+        # Route command
+        routing_info = voice_module.route_command(command_result)
+        
+        return {
+            "command": command_result,
+            "routing": routing_info,
+            "speak_response": routing_info.get("message", "")
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Command processing error: {str(e)}")
+
+
+# ============== Explanation Endpoints ==============
+
+@app.post("/api/explain")
+async def explain_item(
+    type: str,
+    content: str,
+    context: Optional[Dict[str, Any]] = None
+):
+    """Get explanation for config, log, error, etc."""
+    try:
+        from . import explain
+        
+        if type == "config":
+            result = explain.explain_config(content, content, context)
+        elif type == "error":
+            result = explain.explain_error(content, context=context)
+        elif type == "log":
+            log_level = context.get("level") if context else None
+            result = explain.explain_log_entry(content, log_level)
+        else:
+            result = {"error": "Unknown explanation type"}
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Explanation error: {str(e)}")
+
+
+@app.get("/api/wizard/help")
+async def get_wizard_help(type: str, step: int):
+    """Get help for wizard step"""
+    try:
+        from . import explain
+        result = explain.get_wizard_step_help(type, step)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Help error: {str(e)}")
+
+
+# ============== LLM Help Endpoints ==============
+
+@app.post("/api/llm/chat")
+async def llm_chat_help(
+    message: str,
+    session_id: Optional[str] = None,
+    context: Optional[str] = None,
+    provider: Optional[str] = None,
+    model: Optional[str] = None
+):
+    """LLM-powered chat help - uses default preferences if provider/model not specified"""
+    try:
+        from . import llm_help
+        result = await llm_help.chat_completion(
+            message=message,
+            session_id=session_id,
+            context=context,
+            provider=provider or llm_preferences["provider"],
+            model=model or llm_preferences["model"]
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
+
+
+@app.get("/api/llm/autocomplete")
+async def get_autocomplete(
+    partial_text: str,
+    context_type: str = "command",
+    max_suggestions: int = 5
+):
+    """Get autocomplete suggestions"""
+    try:
+        from . import llm_help
+        suggestions = await llm_help.get_autocomplete(
+            partial_text=partial_text,
+            context_type=context_type,
+            max_suggestions=max_suggestions
+        )
+        return {"suggestions": suggestions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Autocomplete error: {str(e)}")
+
+
+@app.post("/api/llm/explain")
+async def llm_explain(
+    item: str,
+    item_type: str = "auto",
+    context: Optional[Dict] = None
+):
+    """LLM-powered explanation"""
+    try:
+        from . import llm_help
+        result = await llm_help.explain_anything(
+            item=item,
+            item_type=item_type,
+            context=context
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Explanation error: {str(e)}")
+
+
+# ============== Config Validation Endpoints ==============
+
+@app.post("/api/config/validate")
+async def validate_configuration(
+    config_data: Dict[str, Any],
+    config_type: str = "general"
+):
+    """Validate configuration"""
+    try:
+        from . import config_validator
+        result = config_validator.validate_config(config_data, config_type)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Validation error: {str(e)}")
+
+
+@app.post("/api/config/backup")
+async def backup_configuration(
+    config_name: str,
+    config_data: Dict[str, Any],
+    description: str = ""
+):
+    """Create configuration backup"""
+    try:
+        from . import config_validator
+        result = config_validator.backup_config(config_name, config_data, description)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backup error: {str(e)}")
+
+
+@app.post("/api/config/restore")
+async def restore_configuration(backup_id: str):
+    """Restore configuration from backup"""
+    try:
+        from . import config_validator
+        result = config_validator.restore_config(backup_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("error"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Restore error: {str(e)}")
+
+
+@app.get("/api/config/backups")
+async def list_configuration_backups(config_name: Optional[str] = None):
+    """List available backups"""
+    try:
+        from . import config_validator
+        result = config_validator.list_backups(config_name)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"List backups error: {str(e)}")
+
+
+@app.post("/api/config/autofix")
+async def autofix_configuration(
+    validation_result: Dict[str, Any],
+    config_data: Dict[str, Any]
+):
+    """Suggest automatic fixes for configuration"""
+    try:
+        from . import config_validator
+        result = config_validator.suggest_autofix(validation_result, config_data)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Autofix error: {str(e)}")
+
+
+# ============== Webhook & Integration Endpoints ==============
+
+@app.post("/api/webhook/n8n")
+async def n8n_webhook(data: Dict[str, Any]):
+    """Receive webhook from n8n workflow"""
+    try:
+        # Process n8n webhook data
+        # This could trigger scans, send notifications, etc.
+        return {
+            "status": "received",
+            "data": data,
+            "message": "Webhook processed successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Webhook error: {str(e)}")
+
+
+@app.post("/api/alerts/push")
+async def send_push_notification(
+    title: str,
+    message: str,
+    severity: str = "info"
+):
+    """Send push notification for critical alerts"""
+    try:
+        # This could integrate with services like:
+        # - Pushover
+        # - Slack
+        # - Discord
+        # - Email
+        return {
+            "status": "sent",
+            "title": title,
+            "message": message,
+            "severity": severity
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Push notification error: {str(e)}")
+
+
+# ============== LLM Preferences ==============
+
+@app.get("/api/llm/preferences")
+async def get_llm_preferences():
+    """
+    Get current default LLM provider and model preferences.
+    
+    Returns:
+        Dictionary with provider, model, and available options
+    """
+    try:
+        # Get available providers from LLM router
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{LLM_ROUTER_URL}/providers", timeout=10.0)
+            available_providers = response.json() if response.status_code == 200 else []
+        
+        return {
+            "current": {
+                "provider": llm_preferences["provider"],
+                "model": llm_preferences["model"]
+            },
+            "available_providers": available_providers,
+            "description": "Current default LLM provider and model. These are used when no explicit provider/model is specified in API requests."
+        }
+    except Exception as e:
+        return {
+            "current": {
+                "provider": llm_preferences["provider"],
+                "model": llm_preferences["model"]
+            },
+            "available_providers": [],
+            "error": str(e)
+        }
+
+
+@app.post("/api/llm/preferences")
+async def set_llm_preferences(request: LLMPreferencesRequest):
+    """
+    Set default LLM provider and model preferences.
+    
+    Args:
+        request: LLMPreferencesRequest with provider and model
+        
+    Returns:
+        Updated preferences
+    """
+    # Validate provider is available
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{LLM_ROUTER_URL}/providers", timeout=10.0)
+            if response.status_code == 200:
+                available_providers = response.json()
+                provider_names = [p["name"] for p in available_providers]
+                if request.provider not in provider_names:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Provider '{request.provider}' not available. Available: {provider_names}"
+                    )
+    except httpx.ConnectError:
+        # LLM router not available, proceed anyway
+        pass
+    
+    # Update preferences
+    llm_preferences["provider"] = request.provider
+    llm_preferences["model"] = request.model
+    
+    return {
+        "status": "updated",
+        "provider": llm_preferences["provider"],
+        "model": llm_preferences["model"],
+        "message": f"Default LLM set to {request.provider}/{request.model}"
+    }
 
 
 if __name__ == "__main__":

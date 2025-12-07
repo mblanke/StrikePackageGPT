@@ -3,56 +3,37 @@ FROM kalilinux/kali-rolling
 # Avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Update and install essential security tools
+# Update and install ALL Kali tools
+# Using kali-linux-everything metapackage for complete tool suite
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Core utilities
-    curl \
-    wget \
-    git \
-    vim \
-    net-tools \
-    iputils-ping \
-    dnsutils \
-    # Reconnaissance tools
-    nmap \
-    masscan \
-    amass \
-    theharvester \
-    whatweb \
-    dnsrecon \
-    fierce \
-    # Web testing tools
-    nikto \
-    gobuster \
-    dirb \
-    sqlmap \
-    # Network tools
-    netcat-openbsd \
-    tcpdump \
-    wireshark-common \
-    hydra \
-    # Exploitation
-    metasploit-framework \
-    exploitdb \
-    # Scripting
-    python3 \
-    python3-pip \
-    python3-venv \
+    kali-linux-everything \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install additional Python tools
+# Install additional Python tools and utilities for command logging
 RUN pip3 install --break-system-packages \
     requests \
     beautifulsoup4 \
     shodan \
     censys
 
+# Install jq and uuid-runtime for command logging
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    jq \
+    uuid-runtime \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create workspace directory
 WORKDIR /workspace
 
-# Copy entrypoint script
+# Copy scripts
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY command_logger.sh /usr/local/bin/command_logger.sh
+COPY capture_wrapper.sh /usr/local/bin/capture
+RUN chmod +x /entrypoint.sh /usr/local/bin/command_logger.sh /usr/local/bin/capture
+
+# Create command history directory
+RUN mkdir -p /workspace/.command_history
 
 ENTRYPOINT ["/entrypoint.sh"]
