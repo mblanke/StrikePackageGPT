@@ -8,29 +8,14 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \
     echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries && \
     echo 'deb http://kali.download/kali kali-rolling main non-free non-free-firmware contrib' > /etc/apt/sources.list
 
-# Update and install core Kali tools (smaller, faster, more reliable)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    nmap \
-    sqlmap \
-    hydra \
-    john \
-    tcpdump \
-    netcat-openbsd \
-    curl \
-    wget \
-    git \
-    python3 \
-    python3-pip \
-    whois \
-    dnsutils \
-    dirb \
-    gobuster \
-    ffuf \
-    seclists \
-    smbclient \
-    impacket-scripts \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Install kali-linux-everything metapackage (600+ tools, ~15GB)
+# This includes: nmap, metasploit, burpsuite, wireshark, aircrack-ng, 
+# hashcat, john, hydra, sqlmap, nikto, wpscan, responder, crackmapexec,
+# enum4linux, gobuster, dirb, wfuzz, masscan, and hundreds more
+RUN apt-get update && \
+    apt-get install -y kali-linux-everything && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install additional Python tools and utilities for command logging
 # Install setuptools first to fix compatibility issues with Python 3.13

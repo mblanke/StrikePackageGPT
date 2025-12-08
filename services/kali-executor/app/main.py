@@ -150,20 +150,48 @@ def detect_os_type(os_string: str) -> str:
 
 
 def infer_os_from_ports(ports: List[Dict]) -> str:
-    """Infer OS type from open ports."""
+    """Infer OS type from open ports.
+    
+    Uses a scoring system to handle hosts running multiple services
+    (e.g., Linux with Samba looks like Windows on port 445).
+    """
     port_nums = {p["port"] for p in ports}
+    services = {p.get("service", "").lower() for p in ports}
     products = [p.get("product", "").lower() for p in ports]
     
-    # Windows indicators
-    windows_ports = {135, 139, 445, 3389, 5985, 5986}
-    if windows_ports & port_nums:
-        return "Windows"
-    if any("microsoft" in p or "windows" in p for p in products):
-        return "Windows"
+    # Score-based detection to handle mixed indicators
+    linux_score = 0
+    windows_score = 0
     
-    # Linux indicators
-    if 22 in port_nums:
+    # Strong Linux indicators
+    if 22 in port_nums:  # SSH is strongly Linux/Unix
+        linux_score += 3
+    if any("openssh" in p or "linux" in p for p in products):
+        linux_score += 5
+    if any("apache" in p or "nginx" in p for p in products):
+        linux_score += 2
+    
+    # Strong Windows indicators  
+    if 135 in port_nums:  # MSRPC is Windows-only
+        windows_score += 5
+    if 3389 in port_nums:  # RDP is Windows
+        windows_score += 3
+    if 5985 in port_nums or 5986 in port_nums:  # WinRM is Windows-only
+        windows_score += 5
+    if any("microsoft" in p or "windows" in p for p in products):
+        windows_score += 5
+    
+    # Weak indicators (could be either)
+    if 445 in port_nums:  # SMB - could be Samba on Linux or Windows
+        windows_score += 1  # Slight Windows bias but not definitive
+    if 139 in port_nums:  # NetBIOS - same as above
+        windows_score += 1
+    
+    # Decide based on score
+    if linux_score > windows_score:
         return "Linux"
+    if windows_score > linux_score:
+        return "Windows"
     
     # Network device indicators
     if 161 in port_nums or 162 in port_nums:
@@ -265,7 +293,11 @@ def parse_nmap_xml(xml_output: str) -> List[Dict[str, Any]]:
             if not host["os_type"] and host["ports"]:
                 host["os_type"] = infer_os_from_ports(host["ports"])
             
-            if host["ip"]:
+            # Only include hosts that have either:
+            # 1. At least one open port (proves real service)
+            # 2. A valid MAC address (proves real local device)
+            # This filters out false positives from router proxy ARP
+            if host["ip"] and (host["ports"] or host["mac"]):
                 hosts.append(host)
                 
     except ET.ParseError as e:

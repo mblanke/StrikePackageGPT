@@ -464,11 +464,13 @@ async def start_network_scan(request: NetworkScanRequest):
     
     # Build nmap command based on scan type
     # Use -T4 for faster timing, --stats-every for progress, --min-hostgroup for parallel scanning
+    # --disable-arp-ping prevents false positives from routers with proxy ARP
+    # MAC addresses are collected automatically in XML output for local network scans
     scan_commands = {
-        "ping": f"nmap -sn -T4 --min-hostgroup 64 {request.target} -oX - --stats-every 1s",
-        "quick": f"nmap -T4 -F --top-ports 100 --min-hostgroup 32 {request.target} -oX - --stats-every 1s",
-        "os": f"nmap -T4 -O --osscan-guess --max-os-tries 1 --min-hostgroup 16 {request.target} -oX - --stats-every 2s",
-        "full": f"nmap -T4 -sS -sV -O --version-light -p- --min-hostgroup 8 {request.target} -oX - --stats-every 2s"
+        "ping": f"nmap -sn -T4 --disable-arp-ping --min-hostgroup 64 {request.target} -oX - --stats-every 1s",
+        "quick": f"nmap -T4 -sS -Pn --disable-arp-ping -F --top-ports 100 --min-hostgroup 32 {request.target} -oX - --stats-every 1s",
+        "os": f"nmap -T4 -sS -Pn --disable-arp-ping -O --osscan-guess --max-os-tries 1 --min-hostgroup 16 {request.target} -oX - --stats-every 2s",
+        "full": f"nmap -T4 -sS -Pn --disable-arp-ping -sV -O --version-light -p- --min-hostgroup 8 {request.target} -oX - --stats-every 2s"
     }
     
     command = scan_commands.get(request.scan_type, scan_commands["quick"])
