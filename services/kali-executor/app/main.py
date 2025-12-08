@@ -13,6 +13,8 @@ import os
 import uuid
 import json
 import re
+import httpx
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from contextlib import asynccontextmanager
 
@@ -99,6 +101,276 @@ def validate_command(command: str) -> tuple[bool, str]:
         return False, f"Command '{base_cmd}' not in allowed list"
     
     return True, "OK"
+
+
+# Dashboard URL for sending discovered hosts
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://dashboard:8080")
+
+
+def is_nmap_command(command: str) -> bool:
+    """Check if command is an nmap scan that might discover hosts."""
+    parts = command.strip().split()
+    if not parts:
+        return False
+    base_cmd = parts[0].split("/")[-1]
+    return base_cmd == "nmap" or base_cmd == "masscan"
+
+
+def detect_os_type(os_string: str) -> str:
+    """Detect OS type from nmap OS string."""
+    if not os_string:
+        return ""
+    os_lower = os_string.lower()
+    
+    if "windows" in os_lower:
+        return "Windows"
+    elif any(x in os_lower for x in ["linux", "ubuntu", "debian", "centos", "red hat"]):
+        return "Linux"
+    elif any(x in os_lower for x in ["mac os", "darwin", "apple", "ios"]):
+        return "macOS"
+    elif "cisco" in os_lower:
+        return "Cisco Router"
+    elif "juniper" in os_lower:
+        return "Juniper Router"
+    elif any(x in os_lower for x in ["fortinet", "fortigate"]):
+        return "Fortinet"
+    elif any(x in os_lower for x in ["vmware", "esxi"]):
+        return "VMware Server"
+    elif "freebsd" in os_lower:
+        return "FreeBSD"
+    elif "android" in os_lower:
+        return "Android"
+    elif any(x in os_lower for x in ["printer", "hp"]):
+        return "Printer"
+    elif "switch" in os_lower:
+        return "Network Switch"
+    elif "router" in os_lower:
+        return "Router"
+    return ""
+
+
+def infer_os_from_ports(ports: List[Dict]) -> str:
+    """Infer OS type from open ports."""
+    port_nums = {p["port"] for p in ports}
+    products = [p.get("product", "").lower() for p in ports]
+    
+    # Windows indicators
+    windows_ports = {135, 139, 445, 3389, 5985, 5986}
+    if windows_ports & port_nums:
+        return "Windows"
+    if any("microsoft" in p or "windows" in p for p in products):
+        return "Windows"
+    
+    # Linux indicators
+    if 22 in port_nums:
+        return "Linux"
+    
+    # Network device indicators
+    if 161 in port_nums or 162 in port_nums:
+        return "Network Device"
+    
+    # Printer
+    if 9100 in port_nums or 631 in port_nums:
+        return "Printer"
+    
+    return ""
+
+
+def parse_nmap_output(stdout: str) -> List[Dict[str, Any]]:
+    """Parse nmap output (XML or text) and extract discovered hosts."""
+    hosts = []
+    
+    # Try XML parsing first (if -oX - was used or combined with other options)
+    if '<?xml' in stdout or '<nmaprun' in stdout:
+        try:
+            xml_start = stdout.find('<?xml')
+            if xml_start == -1:
+                xml_start = stdout.find('<nmaprun')
+            if xml_start != -1:
+                xml_output = stdout[xml_start:]
+                hosts = parse_nmap_xml(xml_output)
+                if hosts:
+                    return hosts
+        except Exception as e:
+            print(f"XML parsing failed: {e}")
+    
+    # Fallback to text parsing
+    hosts = parse_nmap_text(stdout)
+    return hosts
+
+
+def parse_nmap_xml(xml_output: str) -> List[Dict[str, Any]]:
+    """Parse nmap XML output to extract hosts."""
+    hosts = []
+    try:
+        root = ET.fromstring(xml_output)
+        
+        for host_elem in root.findall('.//host'):
+            status = host_elem.find("status")
+            if status is None or status.get("state") != "up":
+                continue
+            
+            host = {
+                "ip": "",
+                "hostname": "",
+                "mac": "",
+                "vendor": "",
+                "os_type": "",
+                "os_details": "",
+                "ports": []
+            }
+            
+            # Get IP address
+            addr = host_elem.find("address[@addrtype='ipv4']")
+            if addr is not None:
+                host["ip"] = addr.get("addr", "")
+            
+            # Get MAC address
+            mac = host_elem.find("address[@addrtype='mac']")
+            if mac is not None:
+                host["mac"] = mac.get("addr", "")
+                host["vendor"] = mac.get("vendor", "")
+            
+            # Get hostname
+            hostname = host_elem.find(".//hostname")
+            if hostname is not None:
+                host["hostname"] = hostname.get("name", "")
+            
+            # Get OS info
+            os_elem = host_elem.find(".//osmatch")
+            if os_elem is not None:
+                os_name = os_elem.get("name", "")
+                host["os_details"] = os_name
+                host["os_type"] = detect_os_type(os_name)
+            
+            # Get ports
+            for port_elem in host_elem.findall(".//port"):
+                state_elem = port_elem.find("state")
+                port_info = {
+                    "port": int(port_elem.get("portid", 0)),
+                    "protocol": port_elem.get("protocol", "tcp"),
+                    "state": state_elem.get("state", "") if state_elem is not None else "",
+                    "service": ""
+                }
+                service = port_elem.find("service")
+                if service is not None:
+                    port_info["service"] = service.get("name", "")
+                    port_info["product"] = service.get("product", "")
+                    port_info["version"] = service.get("version", "")
+                
+                if port_info["state"] == "open":
+                    host["ports"].append(port_info)
+            
+            # Infer OS from ports if still unknown
+            if not host["os_type"] and host["ports"]:
+                host["os_type"] = infer_os_from_ports(host["ports"])
+            
+            if host["ip"]:
+                hosts.append(host)
+                
+    except ET.ParseError as e:
+        print(f"XML parse error: {e}")
+    
+    return hosts
+
+
+def parse_nmap_text(output: str) -> List[Dict[str, Any]]:
+    """Parse nmap text output as fallback.
+    
+    Only returns hosts that have at least one OPEN port.
+    Hosts that respond to ping/ARP but have no open ports are filtered out.
+    """
+    hosts = []
+    current_host = None
+    
+    def save_host_if_has_open_ports(host):
+        """Only save host if it has at least one open port."""
+        if host and host.get("ip") and host.get("ports"):
+            # Infer OS before saving
+            if not host["os_type"]:
+                host["os_type"] = infer_os_from_ports(host["ports"])
+            hosts.append(host)
+    
+    for line in output.split('\n'):
+        # Match host line: "Nmap scan report for hostname (IP)" or "Nmap scan report for IP"
+        host_match = re.search(r'Nmap scan report for (?:(\S+) \()?(\d+\.\d+\.\d+\.\d+)', line)
+        if host_match:
+            # Save previous host only if it has open ports
+            save_host_if_has_open_ports(current_host)
+            
+            current_host = {
+                "ip": host_match.group(2),
+                "hostname": host_match.group(1) or "",
+                "os_type": "",
+                "os_details": "",
+                "ports": [],
+                "mac": "",
+                "vendor": ""
+            }
+            continue
+        
+        if current_host:
+            # Match MAC: "MAC Address: XX:XX:XX:XX:XX:XX (Vendor Name)"
+            mac_match = re.search(r'MAC Address: ([0-9A-Fa-f:]+)(?: \(([^)]+)\))?', line)
+            if mac_match:
+                current_host["mac"] = mac_match.group(1)
+                current_host["vendor"] = mac_match.group(2) or ""
+            
+            # Match port: "80/tcp   open  http    Apache httpd"
+            port_match = re.search(r'(\d+)/(tcp|udp)\s+(\w+)\s+(\S+)(?:\s+(.*))?', line)
+            if port_match and port_match.group(3) == "open":
+                port_info = {
+                    "port": int(port_match.group(1)),
+                    "protocol": port_match.group(2),
+                    "state": "open",
+                    "service": port_match.group(4),
+                    "product": port_match.group(5) or ""
+                }
+                current_host["ports"].append(port_info)
+            
+            # Match OS: "OS details: Linux 4.15 - 5.6" or "Running: Linux"
+            os_match = re.search(r'(?:OS details?|Running):\s*(.+)', line)
+            if os_match:
+                current_host["os_details"] = os_match.group(1)
+                current_host["os_type"] = detect_os_type(os_match.group(1))
+            
+            # Match "Service Info: OS: Linux" style
+            service_os_match = re.search(r'Service Info:.*OS:\s*([^;,]+)', line)
+            if service_os_match and not current_host["os_type"]:
+                current_host["os_type"] = detect_os_type(service_os_match.group(1))
+            
+            # Match "Aggressive OS guesses: Linux 5.4 (98%)" - take first high confidence
+            aggressive_match = re.search(r'Aggressive OS guesses:\s*([^(]+)\s*\((\d+)%\)', line)
+            if aggressive_match and not current_host["os_details"]:
+                confidence = int(aggressive_match.group(2))
+                if confidence >= 85:
+                    current_host["os_details"] = aggressive_match.group(1).strip()
+                    current_host["os_type"] = detect_os_type(aggressive_match.group(1))
+    
+    # Don't forget the last host - only if it has open ports
+    save_host_if_has_open_ports(current_host)
+    
+    return hosts
+
+
+async def send_hosts_to_dashboard(hosts: List[Dict[str, Any]]):
+    """Send discovered hosts to the dashboard for network map update."""
+    if not hosts:
+        return
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{DASHBOARD_URL}/api/network/hosts/discover",
+                json={"hosts": hosts, "source": "terminal"}
+            )
+            if response.status_code == 200:
+                result = response.json()
+                print(f"Sent {len(hosts)} hosts to dashboard: added={result.get('added')}, updated={result.get('updated')}")
+            else:
+                print(f"Failed to send hosts to dashboard: {response.status_code}")
+    except Exception as e:
+        print(f"Error sending hosts to dashboard: {e}")
 
 
 # Docker client
@@ -292,6 +564,15 @@ async def execute_command(request: CommandRequest):
         stdout = output[0].decode('utf-8', errors='replace') if output[0] else ""
         stderr = output[1].decode('utf-8', errors='replace') if output[1] else ""
         
+        # Parse nmap output and send hosts to dashboard for network map
+        if is_nmap_command(request.command) and stdout:
+            try:
+                hosts = parse_nmap_output(stdout)
+                if hosts:
+                    asyncio.create_task(send_hosts_to_dashboard(hosts))
+            except Exception as e:
+                print(f"Error parsing nmap output: {e}")
+        
         return CommandResult(
             command_id=command_id,
             command=request.command,
@@ -420,18 +701,92 @@ async def websocket_execute(websocket: WebSocket):
                     workdir=working_dir
                 )
                 
-                # Stream output
-                for stdout, stderr in exec_result.output:
-                    if stdout:
-                        await websocket.send_json({
-                            "type": "stdout",
-                            "data": stdout.decode('utf-8', errors='replace')
-                        })
-                    if stderr:
-                        await websocket.send_json({
-                            "type": "stderr", 
-                            "data": stderr.decode('utf-8', errors='replace')
-                        })
+                # Collect output for nmap parsing
+                full_stdout = []
+                is_nmap = is_nmap_command(command)
+                
+                # Stream output with keepalive for long-running commands
+                last_output_time = asyncio.get_event_loop().time()
+                output_queue = asyncio.Queue()
+                stream_complete = asyncio.Event()
+                
+                # Synchronous function to read from Docker stream (runs in thread)
+                def read_docker_output_sync(queue: asyncio.Queue, loop, complete_event):
+                    try:
+                        for stdout, stderr in exec_result.output:
+                            if stdout:
+                                asyncio.run_coroutine_threadsafe(
+                                    queue.put(("stdout", stdout.decode('utf-8', errors='replace'))),
+                                    loop
+                                )
+                            if stderr:
+                                asyncio.run_coroutine_threadsafe(
+                                    queue.put(("stderr", stderr.decode('utf-8', errors='replace'))),
+                                    loop
+                                )
+                    except Exception as e:
+                        asyncio.run_coroutine_threadsafe(
+                            queue.put(("error", str(e))),
+                            loop
+                        )
+                    finally:
+                        loop.call_soon_threadsafe(complete_event.set)
+                
+                # Start reading in background thread
+                loop = asyncio.get_event_loop()
+                read_future = loop.run_in_executor(
+                    executor, 
+                    read_docker_output_sync, 
+                    output_queue, 
+                    loop, 
+                    stream_complete
+                )
+                
+                # Send output and keepalives
+                keepalive_interval = 25  # seconds
+                while not stream_complete.is_set() or not output_queue.empty():
+                    try:
+                        # Wait for output with timeout for keepalive
+                        try:
+                            msg_type, msg_data = await asyncio.wait_for(
+                                output_queue.get(), 
+                                timeout=keepalive_interval
+                            )
+                            last_output_time = asyncio.get_event_loop().time()
+                            
+                            if msg_type == "stdout":
+                                if is_nmap:
+                                    full_stdout.append(msg_data)
+                                await websocket.send_json({"type": "stdout", "data": msg_data})
+                            elif msg_type == "stderr":
+                                await websocket.send_json({"type": "stderr", "data": msg_data})
+                            elif msg_type == "error":
+                                await websocket.send_json({"type": "error", "message": msg_data})
+                                
+                        except asyncio.TimeoutError:
+                            # No output for a while, send keepalive
+                            elapsed = asyncio.get_event_loop().time() - last_output_time
+                            await websocket.send_json({
+                                "type": "keepalive", 
+                                "elapsed": int(elapsed),
+                                "message": f"Scan in progress ({int(elapsed)}s)..."
+                            })
+                    except Exception as e:
+                        print(f"Error in output loop: {e}")
+                        break
+                
+                # Wait for read thread to complete
+                await read_future
+                
+                # Parse nmap output and send hosts to dashboard
+                if is_nmap and full_stdout:
+                    try:
+                        combined_output = "".join(full_stdout)
+                        hosts = parse_nmap_output(combined_output)
+                        if hosts:
+                            asyncio.create_task(send_hosts_to_dashboard(hosts))
+                    except Exception as e:
+                        print(f"Error parsing nmap output: {e}")
                 
                 await websocket.send_json({
                     "type": "complete",

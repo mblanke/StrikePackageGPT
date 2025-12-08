@@ -67,12 +67,17 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      # Multi-endpoint support: comma-separated URLs
-      - OLLAMA_ENDPOINTS=${OLLAMA_ENDPOINTS:-http://192.168.1.50:11434}
+      # Local Ollama on host machine (use host.docker.internal on Windows/Mac)
+      - OLLAMA_LOCAL_URL=${OLLAMA_LOCAL_URL:-http://host.docker.internal:11434}
+      # Network Ollama instances (Dell LLM box with larger models)
+      - OLLAMA_NETWORK_URLS=${OLLAMA_NETWORK_URLS:-http://192.168.1.50:11434}
       # Legacy single endpoint (fallback)
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://192.168.1.50:11434}
+      - OLLAMA_ENDPOINTS=${OLLAMA_ENDPOINTS:-http://host.docker.internal:11434}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       # Load balancing: round-robin, random, failover
-      - LOAD_BALANCE_STRATEGY=${LOAD_BALANCE_STRATEGY:-round-robin}
+      - LOAD_BALANCE_STRATEGY=${LOAD_BALANCE_STRATEGY:-failover}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - strikepackage-net
     restart: unless-stopped

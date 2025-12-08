@@ -278,6 +278,70 @@ async def execute_command(request: CommandRequest):
         raise HTTPException(status_code=504, detail="Command execution timed out")
 
 
+@app.websocket("/ws/terminal")
+async def websocket_terminal(websocket: WebSocket):
+    """WebSocket endpoint for streaming terminal output from Kali executor"""
+    import websockets
+    import asyncio
+    
+    await websocket.accept()
+    print("Client WebSocket connected")
+    
+    kali_ws = None
+    try:
+        # Wait for command from client
+        data = await websocket.receive_text()
+        print(f"Received command request: {data}")
+        
+        # Connect to kali-executor WebSocket with extended timeouts for long scans
+        kali_ws_url = "ws://strikepackage-kali-executor:8002/ws/execute"
+        print(f"Connecting to kali-executor at {kali_ws_url}")
+        
+        # Set ping_interval=30s and ping_timeout=3600s (1 hour) for long-running scans
+        kali_ws = await websockets.connect(
+            kali_ws_url,
+            ping_interval=30,
+            ping_timeout=3600,
+            close_timeout=10
+        )
+        print("Connected to kali-executor")
+        
+        # Send command to kali
+        await kali_ws.send(data)
+        print("Command sent to kali-executor")
+        
+        # Stream responses back to client with keepalive
+        last_activity = asyncio.get_event_loop().time()
+        
+        async for message in kali_ws:
+            last_activity = asyncio.get_event_loop().time()
+            print(f"Received from kali: {message[:100]}...")
+            await websocket.send_text(message)
+            
+            # Check if complete
+            try:
+                import json
+                msg_data = json.loads(message)
+                if msg_data.get("type") == "complete":
+                    print("Command complete")
+                    break
+            except:
+                pass
+                
+    except WebSocketDisconnect:
+        print("Client disconnected")
+    except Exception as e:
+        print(f"WebSocket terminal error: {type(e).__name__}: {e}")
+        try:
+            import json
+            await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
+        except:
+            pass
+    finally:
+        if kali_ws:
+            await kali_ws.close()
+
+
 # ============== Scan Management ==============
 
 @app.post("/api/scan")
@@ -764,6 +828,330 @@ async def get_network_scan(scan_id: str):
 async def get_network_hosts():
     """Get all discovered network hosts"""
     return {"hosts": network_hosts}
+
+
+class HostDiscoveryRequest(BaseModel):
+    """Request to add discovered hosts from terminal commands"""
+    hosts: List[Dict[str, Any]]
+    source: str = "terminal"  # terminal, scan, import
+
+
+@app.post("/api/network/hosts/discover")
+async def discover_hosts(request: HostDiscoveryRequest):
+    """Add hosts discovered from terminal commands (e.g., nmap scans)"""
+    global network_hosts
+    
+    added = 0
+    updated = 0
+    
+    for host in request.hosts:
+        if not host.get("ip"):
+            continue
+            
+        # Ensure host has required fields
+        host.setdefault("hostname", "")
+        host.setdefault("mac", "")
+        host.setdefault("vendor", "")
+        host.setdefault("os_type", "")
+        host.setdefault("os_details", "")
+        host.setdefault("ports", [])
+        host.setdefault("source", request.source)
+        
+        # Check if host already exists
+        existing = next((h for h in network_hosts if h["ip"] == host["ip"]), None)
+        if existing:
+            # Update existing host - merge ports
+            existing_ports = {(p["port"], p.get("protocol", "tcp")) for p in existing.get("ports", [])}
+            for port in host.get("ports", []):
+                port_key = (port["port"], port.get("protocol", "tcp"))
+                if port_key not in existing_ports:
+                    existing["ports"].append(port)
+            
+            # Update other fields if they have new info
+            for field in ["hostname", "mac", "vendor", "os_type", "os_details"]:
+                if host.get(field) and not existing.get(field):
+                    existing[field] = host[field]
+            
+            updated += 1
+        else:
+            network_hosts.append(host)
+            added += 1
+    
+    return {
+        "status": "success",
+        "added": added,
+        "updated": updated,
+        "total_hosts": len(network_hosts)
+    }
+
+
+@app.delete("/api/network/hosts")
+async def clear_network_hosts():
+    """Clear all discovered network hosts"""
+    global network_hosts
+    count = len(network_hosts)
+    network_hosts = []
+    return {"status": "success", "cleared": count}
+
+
+@app.delete("/api/network/hosts/{ip}")
+async def delete_network_host(ip: str):
+    """Delete a specific network host by IP"""
+    global network_hosts
+    original_count = len(network_hosts)
+    network_hosts = [h for h in network_hosts if h.get("ip") != ip]
+    
+    if len(network_hosts) == original_count:
+        raise HTTPException(status_code=404, detail="Host not found")
+    
+    return {"status": "success", "deleted": ip}
+
+
+# ===========================================
+# Explain API
+# ===========================================
+class ExplainRequest(BaseModel):
+    type: str  # port, service, tool, finding
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/api/explain")
+async def explain_context(request: ExplainRequest):
+    """Get AI explanation for security concepts"""
+    try:
+        # Build explanation prompt
+        prompt = build_explain_prompt(request.type, request.context)
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{HACKGPT_API_URL}/chat",
+                json={
+                    "message": prompt,
+                    "provider": "ollama",
+                    "model": "llama3.2",
+                    "context": "explain"
+                },
+                timeout=60.0
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                # Parse the response into structured format
+                return parse_explain_response(request.type, request.context, data.get("response", ""))
+            
+            # Fallback to local explanation
+            return get_local_explanation(request.type, request.context)
+    except Exception as e:
+        return get_local_explanation(request.type, request.context)
+
+
+def build_explain_prompt(type: str, context: Dict[str, Any]) -> str:
+    """Build an explanation prompt for the LLM"""
+    prompts = {
+        "port": f"Explain port {context.get('port', 'unknown')}/{context.get('protocol', 'tcp')} for penetration testing. Include: what service typically runs on it, common vulnerabilities, and recommended enumeration commands.",
+        "service": f"Explain the {context.get('service', 'unknown')} service for penetration testing. Include: purpose, common vulnerabilities, and exploitation techniques.",
+        "tool": f"Explain the {context.get('tool', 'unknown')} penetration testing tool. Include: purpose, key features, common usage, and example commands.",
+        "finding": f"Explain this security finding: {context.get('title', 'Unknown')}. Context: {context.get('description', 'N/A')}. Include: impact, remediation, and exploitation potential."
+    }
+    return prompts.get(type, f"Explain: {context}")
+
+
+def parse_explain_response(type: str, context: Dict[str, Any], response: str) -> Dict[str, Any]:
+    """Parse LLM response into structured explanation"""
+    return {
+        "title": get_explain_title(type, context),
+        "description": response,
+        "recommendations": extract_recommendations(response),
+        "warnings": extract_warnings(type, context),
+        "example": extract_example(response)
+    }
+
+
+def get_explain_title(type: str, context: Dict[str, Any]) -> str:
+    """Get title for explanation"""
+    if type == "port":
+        return f"Port {context.get('port', '?')}/{context.get('protocol', 'tcp')}"
+    elif type == "service":
+        return f"Service: {context.get('service', 'Unknown')}"
+    elif type == "tool":
+        return f"Tool: {context.get('tool', 'Unknown')}"
+    elif type == "finding":
+        return context.get('title', 'Security Finding')
+    return "Explanation"
+
+
+def extract_recommendations(response: str) -> List[str]:
+    """Extract recommendations from response"""
+    recs = []
+    lines = response.split('\n')
+    in_recs = False
+    
+    for line in lines:
+        line = line.strip()
+        if any(word in line.lower() for word in ['recommend', 'suggestion', 'should', 'try']):
+            in_recs = True
+        if in_recs and line.startswith(('-', '*', '•', '1', '2', '3')):
+            recs.append(line.lstrip('-*•123456789. '))
+            if len(recs) >= 5:
+                break
+    
+    if not recs:
+        return ["Check for known vulnerabilities", "Look for default credentials", "Document findings"]
+    return recs
+
+
+def extract_warnings(type: str, context: Dict[str, Any]) -> List[str]:
+    """Extract or generate warnings"""
+    warnings = []
+    
+    if type == "finding" and context.get("severity") in ["critical", "high"]:
+        warnings.append("This is a high-severity finding - proceed with caution")
+    
+    if type == "port":
+        port = context.get("port")
+        if port in [21, 23, 445]:
+            warnings.append("This port is commonly targeted in attacks")
+        if port == 3389:
+            warnings.append("Check for BlueKeep (CVE-2019-0708) vulnerability")
+    
+    return warnings
+
+
+def extract_example(response: str) -> Optional[str]:
+    """Extract example commands from response"""
+    import re
+    
+    # Look for code blocks
+    code_match = re.search(r'```(?:\w+)?\n(.*?)```', response, re.DOTALL)
+    if code_match:
+        return code_match.group(1).strip()
+    
+    # Look for command-like lines
+    for line in response.split('\n'):
+        line = line.strip()
+        if line.startswith(('$', '#', 'nmap', 'nikto', 'gobuster', 'sqlmap')):
+            return line.lstrip('$# ')
+    
+    return None
+
+
+def get_local_explanation(type: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    """Get local fallback explanation"""
+    port_info = {
+        21: ("FTP - File Transfer Protocol", "Anonymous access, weak credentials, version exploits"),
+        22: ("SSH - Secure Shell", "Brute force, key-based exploits, old versions"),
+        23: ("Telnet", "Clear text credentials, always a finding"),
+        25: ("SMTP", "Open relay, user enumeration"),
+        53: ("DNS", "Zone transfers, cache poisoning"),
+        80: ("HTTP", "Web vulnerabilities, directory enum"),
+        443: ("HTTPS", "Same as HTTP + SSL/TLS issues"),
+        445: ("SMB", "EternalBlue, null sessions, share enum"),
+        3306: ("MySQL", "Default creds, SQL injection"),
+        3389: ("RDP", "BlueKeep, credential attacks"),
+        5432: ("PostgreSQL", "Default creds, trust auth"),
+        6379: ("Redis", "No auth by default, RCE possible")
+    }
+    
+    if type == "port":
+        port = context.get("port")
+        info = port_info.get(port, ("Unknown Service", "Fingerprint and enumerate"))
+        return {
+            "title": f"Port {port}/{context.get('protocol', 'tcp')}",
+            "description": f"**{info[0]}**\n\n{info[1]}",
+            "recommendations": ["Enumerate service version", "Check for default credentials", "Search for CVEs"],
+            "example": f"nmap -sV -sC -p {port} TARGET"
+        }
+    
+    return {
+        "title": get_explain_title(type, context),
+        "description": "Information not available. Try asking in the chat.",
+        "recommendations": ["Use the AI chat for detailed help"]
+    }
+
+
+# ===========================================
+# Help API
+# ===========================================
+class HelpRequest(BaseModel):
+    question: str
+
+
+@app.post("/api/help")
+async def help_chat(request: HelpRequest):
+    """AI-powered help chat"""
+    try:
+        # Build help-focused prompt
+        prompt = f"""You are a helpful assistant for GooseStrike, an AI-powered penetration testing platform.
+Answer this user question concisely and helpfully. Focus on practical guidance.
+
+Question: {request.question}
+
+Provide a clear, helpful response. Use markdown formatting."""
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{HACKGPT_API_URL}/chat",
+                json={
+                    "message": prompt,
+                    "provider": "ollama",
+                    "model": "llama3.2",
+                    "context": "help"
+                },
+                timeout=60.0
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {"answer": data.get("response", "I can help with that!")}
+            
+            return {"answer": get_local_help(request.question)}
+    except Exception:
+        return {"answer": get_local_help(request.question)}
+
+
+def get_local_help(question: str) -> str:
+    """Get local fallback help"""
+    q = question.lower()
+    
+    if "scan" in q and "network" in q:
+        return """To scan a network:
+
+1. Go to the **Recon** phase in the sidebar
+2. Click **Quick Port Scan** or use the terminal
+3. Example command: `nmap -sV 10.10.10.0/24`
+
+You can also ask in the main chat for AI-powered guidance!"""
+    
+    if "c2" in q or "command and control" in q:
+        return """The **C2 tab** provides:
+
+- **Listeners**: Create HTTP/HTTPS/TCP listeners
+- **Agents**: Manage connected reverse shells  
+- **Payloads**: Generate various reverse shell payloads
+- **Tasks**: Queue commands for agents
+
+Click the C2 tab to get started!"""
+    
+    if "payload" in q or "shell" in q:
+        return """To generate payloads:
+
+1. Go to **C2 tab** → **Payloads** panel
+2. Set your LHOST (your IP) and LPORT
+3. Choose target OS and format
+4. Click **Generate Payload**
+
+Quick Payloads section has one-click common shells!"""
+    
+    return """I'm here to help with GooseStrike!
+
+I can assist with:
+- **Network scanning** and enumeration
+- **Vulnerability assessment** techniques
+- **C2 framework** usage
+- **Payload generation**
+- **Attack methodology** guidance
+
+What would you like to know?"""
 
 
 if __name__ == "__main__":

