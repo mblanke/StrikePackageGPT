@@ -34,7 +34,7 @@ KALI_EXECUTOR_URL = os.getenv("KALI_EXECUTOR_URL", "http://strikepackage-kali-ex
 
 # Default LLM Configuration (can be overridden via environment or API)
 DEFAULT_LLM_PROVIDER = os.getenv("DEFAULT_LLM_PROVIDER", "ollama")
-DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "llama3.2")
+DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "llama3.1:latest")
 
 # In-memory storage (use Redis in production)
 tasks: Dict[str, Any] = {}

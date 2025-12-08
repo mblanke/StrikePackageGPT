@@ -30,7 +30,7 @@ services:
       - LLM_ROUTER_URL=http://strikepackage-llm-router:8000
       - KALI_EXECUTOR_URL=http://strikepackage-kali-executor:8002
       - DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER:-ollama}
-      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-llama3.2}
+      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-llama3.1:latest}
     depends_on:
       - llm-router
       - kali-executor
@@ -50,8 +50,8 @@ services:
       - KALI_CONTAINER_NAME=strikepackage-kali
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      - kali
+    # depends_on:
+    #   - kali  # Temporarily disabled due to Kali mirror SSL issues
     networks:
       - strikepackage-net
     restart: unless-stopped
@@ -67,12 +67,16 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      # Multi-endpoint support: comma-separated URLs
-      - OLLAMA_ENDPOINTS=${OLLAMA_ENDPOINTS:-http://192.168.1.50:11434}
+      # Local Ollama endpoint (use host.docker.internal to reach host machine from container)
+      - OLLAMA_LOCAL_URL=${OLLAMA_LOCAL_URL:-http://host.docker.internal:11434}
+      # Network Ollama endpoints (comma-separated for multiple)
+      - OLLAMA_NETWORK_URLS=${OLLAMA_NETWORK_URLS:-http://192.168.1.50:11434}
       # Legacy single endpoint (fallback)
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://192.168.1.50:11434}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       # Load balancing: round-robin, random, failover
       - LOAD_BALANCE_STRATEGY=${LOAD_BALANCE_STRATEGY:-round-robin}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - strikepackage-net
     restart: unless-stopped

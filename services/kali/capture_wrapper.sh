@@ -1,8 +1,10 @@
 #!/bin/bash
 # Output Capture Wrapper for Security Tools
 # Wraps command execution to capture stdout/stderr and save results
+# Automatically sends nmap results to dashboard network map
 
 COMMAND_LOG_DIR="${COMMAND_LOG_DIR:-/workspace/.command_history}"
+DASHBOARD_URL="${DASHBOARD_URL:-http://strikepackage-dashboard:8080}"
 mkdir -p "$COMMAND_LOG_DIR"
 
 # Get command from arguments
@@ -61,12 +63,35 @@ cat > "$output_file" << EOF
 }
 EOF
 
+# Output results to terminal first
+echo "$stdout_content"
+[ -n "$stderr_content" ] && echo "$stderr_content" >&2
+
 # Clean up temp files
 rm -f "$stdout_file" "$stderr_file"
 
-# Output results to terminal
-cat "$stdout_file" 2>/dev/null || true
-cat "$stderr_file" >&2 2>/dev/null || true
+# If this was an nmap command, send results to dashboard network map
+if [[ "$cmd_string" == nmap* ]] && [ $exit_code -eq 0 ]; then
+    echo "" >&2
+    echo "[StrikePackageGPT] Detected nmap scan, sending to Network Map..." >&2
+    
+    # Send nmap output to dashboard for parsing
+    nmap_json=$(jq -n --arg output "$stdout_content" --arg source "terminal" \
+        '{output: $output, source: $source}')
+    
+    response=$(curl -s -X POST "${DASHBOARD_URL}/api/network/nmap-results" \
+        -H "Content-Type: application/json" \
+        -d "$nmap_json" 2>/dev/null || echo '{"error":"failed to connect"}')
+    
+    # Parse response
+    added=$(echo "$response" | jq -r '.added // 0' 2>/dev/null)
+    updated=$(echo "$response" | jq -r '.updated // 0' 2>/dev/null)
+    total=$(echo "$response" | jq -r '.total // 0' 2>/dev/null)
+    
+    if [ "$added" != "null" ] && [ "$added" != "0" -o "$updated" != "0" ]; then
+        echo "[StrikePackageGPT] Network Map updated: $added added, $updated updated (total: $total hosts)" >&2
+    fi
+fi
 
 echo "" >&2
 echo "[StrikePackageGPT] Command captured: $cmd_id" >&2

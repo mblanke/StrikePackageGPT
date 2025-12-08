@@ -62,7 +62,7 @@
         .network-link.active { stroke: #dc2626; stroke-width: 3; }
         .node-label { font-size: 11px; fill: #a3a3a3; text-anchor: middle; }
         .node-ip { font-size: 10px; fill: #666; text-anchor: middle; font-family: monospace; }
-        .device-icon { font-size: 24px; }
+        .device-icon { font-size: 24px; font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; line-height: 1; }
     </style>
 </head>
 <body class="bg-sp-black text-sp-white">
@@ -537,8 +537,8 @@
                     </div>
 
                     <!-- Network Map SVG -->
-                    <div x-show="networkHosts.length > 0 && !networkMapLoading" class="flex-1 network-map-container relative">
-                        <svg id="networkMapSvg" class="w-full h-full"></svg>
+                    <div x-show="networkHosts.length > 0 && !networkMapLoading" class="flex-1 network-map-container relative" style="min-height: 500px; height: calc(100vh - 280px);">
+                        <svg id="networkMapSvg" style="width: 100%; height: 100%; display: block;"></svg>
                     </div>
 
                     <!-- Host Details Panel -->
@@ -796,6 +796,26 @@
                                         </div>
                                     </template>
                                 </div>
+                            </div>
+                        </template>
+
+                        <!-- Show hosts if parsed has hosts (nmap scans) -->
+                        <template x-if="selectedScan.parsed && (Array.isArray(selectedScan.parsed) || selectedScan.parsed.hosts)">
+                            <div>
+                                <h4 class="text-sm text-sp-white-muted mb-2">Discovered Hosts (<span x-text="(Array.isArray(selectedScan.parsed) ? selectedScan.parsed : selectedScan.parsed.hosts || []).length"></span>)</h4>
+                                <div class="space-y-2 max-h-48 overflow-y-auto mb-3">
+                                    <template x-for="host in (Array.isArray(selectedScan.parsed) ? selectedScan.parsed : selectedScan.parsed.hosts || [])" :key="host.ip">
+                                        <div class="flex items-center gap-3 bg-sp-black p-2 rounded text-sm">
+                                            <span class="text-sp-red font-mono" x-text="host.ip"></span>
+                                            <span class="text-sp-white-muted" x-text="host.hostname || ''"></span>
+                                            <span class="text-green-400 text-xs" x-text="host.ports ? host.ports.filter(p => p.state === 'open').length + ' open ports' : ''"></span>
+                                        </div>
+                                    </template>
+                                </div>
+                                <button @click="loadScanToNetworkMap(selectedScan)" 
+                                        class="w-full bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded text-sm transition flex items-center justify-center gap-2">
+                                    🗺️ Load to Network Map
+                                </button>
                             </div>
                         </template>
 
@@ -1264,6 +1284,49 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
 
                 viewScanDetails(scan) { this.selectedScan = scan; this.detailsModalOpen = true; },
 
+                loadScanToNetworkMap(scan) {
+                    // Get hosts from the scan's parsed data
+                    let hosts = [];
+                    if (Array.isArray(scan.parsed)) {
+                        hosts = scan.parsed;
+                    } else if (scan.parsed && scan.parsed.hosts) {
+                        hosts = scan.parsed.hosts;
+                    }
+                    
+                    if (hosts.length === 0) {
+                        alert('No hosts found in this scan');
+                        return;
+                    }
+                    
+                    // Merge hosts into networkHosts (update existing, add new)
+                    hosts.forEach(host => {
+                        const existing = this.networkHosts.find(h => h.ip === host.ip);
+                        if (existing) {
+                            // Update existing host
+                            Object.assign(existing, host);
+                        } else {
+                            // Add new host
+                            this.networkHosts.push({
+                                ip: host.ip,
+                                hostname: host.hostname || '',
+                                os_type: host.os_type || host.os || '',
+                                os_details: host.os_details || '',
+                                ports: host.ports || [],
+                                mac: host.mac || '',
+                                vendor: host.vendor || '',
+                                source: 'scan-history'
+                            });
+                        }
+                    });
+                    
+                    // Close modal and switch to network map
+                    this.detailsModalOpen = false;
+                    this.activeTab = 'network-map';
+                    
+                    // Re-render network map
+                    this.$nextTick(() => this.renderNetworkMap());
+                },
+
                 askAboutTool(tool) {
                     this.activeTab = 'phase';
                     this.userInput = `Explain how to use ${tool.name} for ${this.getCurrentPhase().name.toLowerCase()}. Include common options and example commands.`;
@@ -1569,117 +1632,114 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                     
                     if (this.networkHosts.length === 0) return;
                     
-                    const container = document.getElementById('networkMapSvg').parentElement;
-                    const width = container.clientWidth;
-                    const height = container.clientHeight;
+                    const container = document.getElementById('networkMapSvg');
+                    if (!container) return;
+                    
+                    const rect = container.getBoundingClientRect();
+                    const width = rect.width || 800;
+                    const height = rect.height || 500;
+                    const centerX = width / 2;
+                    const centerY = height / 2;
+                    
+                    // Set explicit width/height on SVG
+                    svg.attr('width', width)
+                       .attr('height', height);
                     
                     // Create a gateway node (center)
                     const gatewayIp = this.networkHosts[0]?.ip.split('.').slice(0, 3).join('.') + '.1';
-                    const nodes = [
-                        { id: 'gateway', ip: gatewayIp, os_type: 'router', hostname: 'Gateway', isGateway: true }
-                    ];
                     
-                    // Add host nodes
-                    this.networkHosts.forEach(host => {
-                        nodes.push({ 
-                            id: host.ip, 
-                            ip: host.ip, 
-                            os_type: host.os_type,
-                            hostname: host.hostname,
-                            ports: host.ports
-                        });
+                    // Calculate static positions - gateway in center, hosts in circle
+                    const hostCount = this.networkHosts.length;
+                    const radius = Math.min(width, height) * 0.35;
+                    
+                    // Draw links first (behind nodes)
+                    const linkGroup = svg.append('g');
+                    this.networkHosts.forEach((host, i) => {
+                        const angle = (2 * Math.PI * i) / hostCount - Math.PI / 2;
+                        const hostX = centerX + radius * Math.cos(angle);
+                        const hostY = centerY + radius * Math.sin(angle);
+                        
+                        linkGroup.append('line')
+                            .attr('x1', centerX)
+                            .attr('y1', centerY)
+                            .attr('x2', hostX)
+                            .attr('y2', hostY)
+                            .attr('stroke', '#3a3a3a')
+                            .attr('stroke-width', 2);
                     });
                     
-                    // Create links from each host to gateway
-                    const links = this.networkHosts.map(host => ({
-                        source: 'gateway',
-                        target: host.ip
-                    }));
+                    // Draw gateway node
+                    const gatewayGroup = svg.append('g')
+                        .attr('transform', `translate(${centerX},${centerY})`)
+                        .style('cursor', 'pointer');
                     
-                    // Force simulation
-                    const simulation = d3.forceSimulation(nodes)
-                        .force('link', d3.forceLink(links).id(d => d.id).distance(150))
-                        .force('charge', d3.forceManyBody().strength(-300))
-                        .force('center', d3.forceCenter(width / 2, height / 2))
-                        .force('collision', d3.forceCollide().radius(60));
+                    gatewayGroup.append('circle')
+                        .attr('r', 40)
+                        .attr('fill', '#1f1f1f')
+                        .attr('stroke', '#dc2626')
+                        .attr('stroke-width', 3);
                     
-                    // Draw links
-                    const link = svg.append('g')
-                        .selectAll('line')
-                        .data(links)
-                        .enter().append('line')
-                        .attr('class', 'network-link')
-                        .attr('stroke', '#3a3a3a')
-                        .attr('stroke-width', 2);
-                    
-                    // Draw nodes
-                    const node = svg.append('g')
-                        .selectAll('g')
-                        .data(nodes)
-                        .enter().append('g')
-                        .attr('class', 'network-node')
-                        .attr('data-ip', d => d.ip)
-                        .style('cursor', 'pointer')
-                        .on('click', (event, d) => {
-                            if (!d.isGateway) {
-                                const host = this.networkHosts.find(h => h.ip === d.ip);
-                                if (host) this.selectHost(host);
-                            }
-                        });
-                    
-                    // Node circles
-                    node.append('circle')
-                        .attr('r', d => d.isGateway ? 35 : 30)
-                        .attr('fill', d => d.isGateway ? '#1f1f1f' : '#2a2a2a')
-                        .attr('stroke', d => d.isGateway ? '#dc2626' : '#3a3a3a')
-                        .attr('stroke-width', 2);
-                    
-                    // Device icons
-                    node.append('text')
-                        .attr('class', 'device-icon')
+                    gatewayGroup.append('text')
                         .attr('text-anchor', 'middle')
                         .attr('dy', '0.35em')
-                        .text(d => this.getDeviceIcon(d.os_type));
+                        .attr('font-size', '28px')
+                        .text('📡');
                     
-                    // IP labels
-                    node.append('text')
+                    gatewayGroup.append('text')
                         .attr('class', 'node-ip')
-                        .attr('dy', 50)
-                        .text(d => d.ip);
+                        .attr('text-anchor', 'middle')
+                        .attr('dy', 60)
+                        .attr('fill', '#666')
+                        .attr('font-size', '10px')
+                        .attr('font-family', 'monospace')
+                        .text(gatewayIp);
                     
-                    // Hostname labels
-                    node.append('text')
+                    gatewayGroup.append('text')
                         .attr('class', 'node-label')
-                        .attr('dy', 65)
-                        .text(d => d.hostname || '');
+                        .attr('text-anchor', 'middle')
+                        .attr('dy', 75)
+                        .attr('fill', '#a3a3a3')
+                        .attr('font-size', '11px')
+                        .text('Gateway');
                     
-                    // Update positions on tick
-                    simulation.on('tick', () => {
-                        link
-                            .attr('x1', d => d.source.x)
-                            .attr('y1', d => d.source.y)
-                            .attr('x2', d => d.target.x)
-                            .attr('y2', d => d.target.y);
+                    // Draw host nodes
+                    this.networkHosts.forEach((host, i) => {
+                        const angle = (2 * Math.PI * i) / hostCount - Math.PI / 2;
+                        const hostX = centerX + radius * Math.cos(angle);
+                        const hostY = centerY + radius * Math.sin(angle);
                         
-                        node.attr('transform', d => `translate(${d.x},${d.y})`);
+                        const hostGroup = svg.append('g')
+                            .attr('transform', `translate(${hostX},${hostY})`)
+                            .style('cursor', 'pointer')
+                            .on('click', () => this.selectHost(host));
+                        
+                        hostGroup.append('circle')
+                            .attr('r', 35)
+                            .attr('fill', '#2a2a2a')
+                            .attr('stroke', '#3a3a3a')
+                            .attr('stroke-width', 2);
+                        
+                        hostGroup.append('text')
+                            .attr('text-anchor', 'middle')
+                            .attr('dy', '0.35em')
+                            .attr('font-size', '24px')
+                            .text(this.getDeviceIcon(host.os_type));
+                        
+                        hostGroup.append('text')
+                            .attr('text-anchor', 'middle')
+                            .attr('dy', 55)
+                            .attr('fill', '#dc2626')
+                            .attr('font-size', '11px')
+                            .attr('font-family', 'monospace')
+                            .text(host.ip);
+                        
+                        hostGroup.append('text')
+                            .attr('text-anchor', 'middle')
+                            .attr('dy', 70)
+                            .attr('fill', '#a3a3a3')
+                            .attr('font-size', '10px')
+                            .text(host.hostname ? host.hostname.substring(0, 20) : '');
                     });
-                    
-                    // Drag behavior
-                    node.call(d3.drag()
-                        .on('start', (event, d) => {
-                            if (!event.active) simulation.alphaTarget(0.3).restart();
-                            d.fx = d.x;
-                            d.fy = d.y;
-                        })
-                        .on('drag', (event, d) => {
-                            d.fx = event.x;
-                            d.fy = event.y;
-                        })
-                        .on('end', (event, d) => {
-                            if (!event.active) simulation.alphaTarget(0);
-                            d.fx = null;
-                            d.fy = null;
-                        }));
                 }
             }
         }
