@@ -102,6 +102,30 @@
                         </div>
                     </div>
                     <img src="/static/flag.png" alt="Canada" class="h-6 ml-2" onerror="this.style.display='none'">
+                    
+                    <!-- Project Selector -->
+                    <div class="flex items-center gap-2 ml-6 px-3 py-1.5 bg-sp-grey rounded border border-sp-grey-mid">
+                        <span class="text-sp-white-muted text-sm">📁 Project:</span>
+                        <select x-model="currentProjectId" 
+                                @change="selectProject()"
+                                class="bg-sp-dark border-0 text-sp-white text-sm font-semibold focus:outline-none max-w-[180px]">
+                            <option value="">No Project</option>
+                            <template x-for="proj in projects" :key="proj.id">
+                                <option :value="proj.id" x-text="proj.name"></option>
+                            </template>
+                        </select>
+                        <button @click="showProjectModal = true"
+                                class="p-1 hover:bg-sp-grey-light rounded transition"
+                                title="Create New Project">
+                            <span class="text-sp-red">+</span>
+                        </button>
+                        <button @click="showProjectDetails = !showProjectDetails"
+                                x-show="currentProjectId"
+                                class="p-1 hover:bg-sp-grey-light rounded transition"
+                                title="Project Details">
+                            <span class="text-sp-white-muted">⚙️</span>
+                        </button>
+                    </div>
                 </div>
                 <div class="flex items-center gap-4">
                     <div x-show="runningProcesses.length > 0" 
@@ -200,6 +224,18 @@
                     <span x-show="c2Agents.filter(a => a.status === 'active').length > 0" 
                           class="px-2 py-0.5 bg-green-500/30 rounded-full text-xs text-green-400" 
                           x-text="c2Agents.filter(a => a.status === 'active').length"></span>
+                </button>
+                <button @click="activeTab = 'credentials'" 
+                        :class="activeTab === 'credentials' ? 'border-sp-red text-sp-red bg-sp-grey' : 'border-transparent text-sp-white-muted hover:text-white hover:bg-sp-grey-light'"
+                        class="px-4 py-2 font-medium transition border-b-2 flex items-center gap-2">
+                    🔐 Creds
+                    <span x-show="credentials.length > 0" class="px-2 py-0.5 bg-sp-red/30 rounded-full text-xs" x-text="credentials.length"></span>
+                </button>
+                <button @click="activeTab = 'notes'" 
+                        :class="activeTab === 'notes' ? 'border-sp-red text-sp-red bg-sp-grey' : 'border-transparent text-sp-white-muted hover:text-white hover:bg-sp-grey-light'"
+                        class="px-4 py-2 font-medium transition border-b-2 flex items-center gap-2">
+                    📝 Notes
+                    <span x-show="projectNotes.length > 0" class="px-2 py-0.5 bg-sp-red/30 rounded-full text-xs" x-text="projectNotes.length"></span>
                 </button>
             </div>
         </header>
@@ -622,6 +658,10 @@
                             <p class="text-sm text-sp-white-muted">Discovered hosts with OS detection</p>
                         </div>
                         <div class="flex gap-3">
+                            <button @click="showPipelineModal = true" 
+                                    class="bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded text-sm transition flex items-center gap-2">
+                                🚀 Recon Pipeline
+                            </button>
                             <button @click="showRangeScanModal = true" 
                                     class="bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded text-sm transition flex items-center gap-2">
                                 🔍 Scan Range
@@ -786,6 +826,58 @@
                                         class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-xs">
                                     🖥️ Terminal
                                 </button>
+                            </div>
+                            <div class="pt-2">
+                                <button @click="getExploitSuggestions(selectedHost)" 
+                                        :disabled="exploitLoading"
+                                        class="w-full bg-yellow-600 hover:bg-yellow-700 px-3 py-2 rounded text-xs flex items-center justify-center gap-2 transition disabled:opacity-50">
+                                    <span x-show="!exploitLoading">💥 Find Exploits</span>
+                                    <span x-show="exploitLoading" class="flex items-center gap-2">
+                                        <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/>
+                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                                        </svg>
+                                        Analyzing...
+                                    </span>
+                                </button>
+                            </div>
+                            <!-- Exploit Suggestions List -->
+                            <div x-show="exploitSuggestions.length > 0" class="pt-2 space-y-2 max-h-64 overflow-y-auto">
+                                <template x-for="exploit in exploitSuggestions" :key="exploit.exploit_name">
+                                    <div class="bg-sp-black p-2 rounded text-xs border-l-2"
+                                         :class="{
+                                             'border-red-500': exploit.severity === 'critical',
+                                             'border-orange-500': exploit.severity === 'high',
+                                             'border-yellow-500': exploit.severity === 'medium',
+                                             'border-green-500': exploit.severity === 'low',
+                                             'border-blue-500': exploit.severity === 'info'
+                                         }">
+                                        <div class="flex justify-between items-start mb-1">
+                                            <span class="font-semibold text-sp-white" x-text="exploit.exploit_name"></span>
+                                            <span :class="{
+                                                'bg-red-500/20 text-red-400': exploit.severity === 'critical',
+                                                'bg-orange-500/20 text-orange-400': exploit.severity === 'high',
+                                                'bg-yellow-500/20 text-yellow-400': exploit.severity === 'medium',
+                                                'bg-green-500/20 text-green-400': exploit.severity === 'low',
+                                                'bg-blue-500/20 text-blue-400': exploit.severity === 'info'
+                                            }" class="px-1.5 py-0.5 rounded text-xs" x-text="exploit.severity"></span>
+                                        </div>
+                                        <p class="text-sp-white-muted mb-1" x-text="exploit.description"></p>
+                                        <div x-show="exploit.cve" class="text-red-400 text-xs mb-1" x-text="exploit.cve"></div>
+                                        <div class="flex gap-2 mt-2">
+                                            <button x-show="exploit.msf_module" 
+                                                    @click="runMsfModule(exploit.msf_module, selectedHost.ip)"
+                                                    class="px-2 py-1 bg-sp-grey hover:bg-sp-grey-light rounded text-xs">
+                                                🔧 MSF
+                                            </button>
+                                            <button x-show="exploit.manual_check"
+                                                    @click="runManualCheck(exploit.manual_check, selectedHost.ip)"
+                                                    class="px-2 py-1 bg-sp-grey hover:bg-sp-grey-light rounded text-xs">
+                                                📋 Check
+                                            </button>
+                                        </div>
+                                    </div>
+                                </template>
                             </div>
                         </div>
                     </div>
@@ -1215,6 +1307,157 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Credentials Tab -->
+                <div x-show="activeTab === 'credentials'" class="flex-1 flex flex-col overflow-hidden">
+                    <div class="p-4 border-b border-sp-grey-mid flex justify-between items-center">
+                        <h2 class="text-lg font-bold text-sp-white flex items-center gap-2">
+                            🔐 Credentials
+                            <span class="text-sm font-normal text-sp-white-muted">(<span x-text="credentials.length"></span> total)</span>
+                        </h2>
+                        <div class="flex gap-2">
+                            <button @click="showCredentialModal = true" 
+                                    class="bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded text-sm transition flex items-center gap-2"
+                                    :disabled="!currentProjectId">
+                                + Add Credential
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <template x-if="!currentProjectId">
+                        <div class="flex-1 flex items-center justify-center text-center p-6">
+                            <div>
+                                <p class="text-5xl mb-4">📁</p>
+                                <p class="text-sp-white-muted text-lg">No Project Selected</p>
+                                <p class="text-sp-white-muted text-sm mt-2">Create or select a project to manage credentials</p>
+                                <button @click="showProjectModal = true" class="mt-4 bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded transition">
+                                    Create Project
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <template x-if="currentProjectId">
+                        <div class="flex-1 overflow-auto p-4">
+                            <div x-show="credentials.length === 0" class="flex items-center justify-center text-center p-12">
+                                <div>
+                                    <p class="text-5xl mb-4">🔑</p>
+                                    <p class="text-sp-white-muted">No credentials captured yet</p>
+                                    <p class="text-sp-white-muted text-sm mt-2">Add credentials manually or capture them during attacks</p>
+                                </div>
+                            </div>
+                            
+                            <div x-show="credentials.length > 0" class="overflow-x-auto">
+                                <table class="w-full text-sm">
+                                    <thead class="bg-sp-grey sticky top-0">
+                                        <tr class="text-left text-sp-white-muted">
+                                            <th class="px-4 py-3 font-semibold">Username</th>
+                                            <th class="px-4 py-3 font-semibold">Password/Hash</th>
+                                            <th class="px-4 py-3 font-semibold">Domain</th>
+                                            <th class="px-4 py-3 font-semibold">Host</th>
+                                            <th class="px-4 py-3 font-semibold">Service</th>
+                                            <th class="px-4 py-3 font-semibold">Source</th>
+                                            <th class="px-4 py-3 font-semibold w-20">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-sp-grey-mid">
+                                        <template x-for="cred in credentials" :key="cred.id">
+                                            <tr class="hover:bg-sp-grey/50 transition">
+                                                <td class="px-4 py-3 font-mono text-sp-red" x-text="cred.username"></td>
+                                                <td class="px-4 py-3 font-mono">
+                                                    <span x-show="cred.password" class="text-green-400" x-text="cred.password"></span>
+                                                    <span x-show="cred.hash && !cred.password" class="text-yellow-400 text-xs" x-text="(cred.hash || '').substring(0, 32) + '...'"></span>
+                                                </td>
+                                                <td class="px-4 py-3 text-sp-white-muted" x-text="cred.domain || '-'"></td>
+                                                <td class="px-4 py-3 font-mono text-sp-white-dim" x-text="cred.host || '-'"></td>
+                                                <td class="px-4 py-3 text-sp-white-muted" x-text="cred.service || '-'"></td>
+                                                <td class="px-4 py-3 text-sp-white-muted text-xs" x-text="cred.source || '-'"></td>
+                                                <td class="px-4 py-3">
+                                                    <button @click="deleteCredential(cred.id)" 
+                                                            class="text-red-400 hover:text-red-300 p-1 transition"
+                                                            title="Delete credential">
+                                                        🗑️
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Notes Tab -->
+                <div x-show="activeTab === 'notes'" class="flex-1 flex flex-col overflow-hidden">
+                    <div class="p-4 border-b border-sp-grey-mid flex justify-between items-center">
+                        <h2 class="text-lg font-bold text-sp-white flex items-center gap-2">
+                            📝 Project Notes
+                            <span class="text-sm font-normal text-sp-white-muted">(<span x-text="projectNotes.length"></span> notes)</span>
+                        </h2>
+                        <div class="flex gap-2">
+                            <button @click="showNoteModal = true" 
+                                    class="bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded text-sm transition flex items-center gap-2"
+                                    :disabled="!currentProjectId">
+                                + Add Note
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <template x-if="!currentProjectId">
+                        <div class="flex-1 flex items-center justify-center text-center p-6">
+                            <div>
+                                <p class="text-5xl mb-4">📁</p>
+                                <p class="text-sp-white-muted text-lg">No Project Selected</p>
+                                <p class="text-sp-white-muted text-sm mt-2">Create or select a project to take notes</p>
+                                <button @click="showProjectModal = true" class="mt-4 bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded transition">
+                                    Create Project
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <template x-if="currentProjectId">
+                        <div class="flex-1 overflow-auto p-4">
+                            <div x-show="projectNotes.length === 0" class="flex items-center justify-center text-center p-12">
+                                <div>
+                                    <p class="text-5xl mb-4">📝</p>
+                                    <p class="text-sp-white-muted">No notes yet</p>
+                                    <p class="text-sp-white-muted text-sm mt-2">Add notes to document your findings and observations</p>
+                                </div>
+                            </div>
+                            
+                            <div x-show="projectNotes.length > 0" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <template x-for="note in projectNotes" :key="note.id">
+                                    <div class="bg-sp-grey border border-sp-grey-mid rounded-lg p-4 hover:border-sp-red/50 transition">
+                                        <div class="flex items-start justify-between mb-2">
+                                            <div>
+                                                <h4 class="font-semibold text-sp-white" x-text="note.title"></h4>
+                                                <div class="flex items-center gap-2 mt-1">
+                                                    <span :class="{
+                                                        'bg-gray-500/30 text-gray-400': note.category === 'general',
+                                                        'bg-blue-500/30 text-blue-400': note.category === 'recon',
+                                                        'bg-red-500/30 text-red-400': note.category === 'exploitation',
+                                                        'bg-purple-500/30 text-purple-400': note.category === 'post-exploit',
+                                                        'bg-yellow-500/30 text-yellow-400': note.category === 'loot'
+                                                    }" class="px-2 py-0.5 rounded text-xs" x-text="note.category"></span>
+                                                    <span x-show="note.host" class="text-xs font-mono text-sp-white-muted" x-text="note.host"></span>
+                                                </div>
+                                            </div>
+                                            <button @click="deleteNote(note.id)" 
+                                                    class="text-red-400 hover:text-red-300 p-1 transition"
+                                                    title="Delete note">
+                                                🗑️
+                                            </button>
+                                        </div>
+                                        <pre class="text-sm text-sp-white-dim whitespace-pre-wrap font-mono bg-sp-dark p-2 rounded mt-2 max-h-40 overflow-auto" x-text="note.content"></pre>
+                                        <div class="text-xs text-sp-white-muted mt-2" x-text="new Date(note.created_at).toLocaleString()"></div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </div>
             </main>
         </div>
 
@@ -1400,6 +1643,345 @@
                             class="flex-1 bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded font-semibold transition"
                             :disabled="!rangeScanTarget">
                         Start Scan
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recon Pipeline Modal -->
+        <div x-show="showPipelineModal" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div class="bg-sp-dark rounded-lg p-6 w-full max-w-xl border border-sp-grey-mid glow-red" @click.away="showPipelineModal = false">
+                <h3 class="text-lg font-bold mb-4 text-sp-white">🚀 Automated Recon Pipeline</h3>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-sp-white-muted mb-1">Target Range *</label>
+                        <input type="text" x-model="newPipeline.target" 
+                               placeholder="192.168.1.0/24 or 10.0.0.1-254"
+                               class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white placeholder-sp-white-muted font-mono">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm text-sp-white-muted mb-2">Pipeline Type</label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <button @click="newPipeline.pipeline = 'quick'"
+                                    :class="newPipeline.pipeline === 'quick' ? 'border-sp-red bg-sp-red/20' : 'border-sp-grey-mid hover:border-sp-grey-light'"
+                                    class="p-3 rounded border text-left transition">
+                                <div class="font-semibold text-green-400">⚡ Quick</div>
+                                <div class="text-xs text-sp-white-muted">Host discovery + top 100 ports</div>
+                                <div class="text-xs text-sp-white-muted mt-1">~5 min</div>
+                            </button>
+                            <button @click="newPipeline.pipeline = 'standard'"
+                                    :class="newPipeline.pipeline === 'standard' ? 'border-sp-red bg-sp-red/20' : 'border-sp-grey-mid hover:border-sp-grey-light'"
+                                    class="p-3 rounded border text-left transition">
+                                <div class="font-semibold text-blue-400">🔍 Standard</div>
+                                <div class="text-xs text-sp-white-muted">Top 1000 ports + service/OS detection</div>
+                                <div class="text-xs text-sp-white-muted mt-1">~20 min</div>
+                            </button>
+                            <button @click="newPipeline.pipeline = 'full'"
+                                    :class="newPipeline.pipeline === 'full' ? 'border-sp-red bg-sp-red/20' : 'border-sp-grey-mid hover:border-sp-grey-light'"
+                                    class="p-3 rounded border text-left transition">
+                                <div class="font-semibold text-yellow-400">🔬 Full</div>
+                                <div class="text-xs text-sp-white-muted">All 65535 ports + full enumeration</div>
+                                <div class="text-xs text-sp-white-muted mt-1">~60+ min</div>
+                            </button>
+                            <button @click="newPipeline.pipeline = 'stealth'"
+                                    :class="newPipeline.pipeline === 'stealth' ? 'border-sp-red bg-sp-red/20' : 'border-sp-grey-mid hover:border-sp-grey-light'"
+                                    class="p-3 rounded border text-left transition">
+                                <div class="font-semibold text-purple-400">🥷 Stealth</div>
+                                <div class="text-xs text-sp-white-muted">Slow, evade IDS detection</div>
+                                <div class="text-xs text-sp-white-muted mt-1">~30 min</div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-sp-grey transition">
+                            <input type="checkbox" x-model="newPipeline.include_vuln_scan" 
+                                   class="rounded bg-sp-grey border-sp-grey-mid text-sp-red focus:ring-sp-red">
+                            <div>
+                                <div class="text-sp-white text-sm">Include Vulnerability Scan</div>
+                                <div class="text-xs text-sp-white-muted">Run nmap vuln scripts (adds ~30 min)</div>
+                            </div>
+                        </label>
+                        <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-sp-grey transition">
+                            <input type="checkbox" x-model="newPipeline.include_web_enum" 
+                                   class="rounded bg-sp-grey border-sp-grey-mid text-sp-red focus:ring-sp-red">
+                            <div>
+                                <div class="text-sp-white text-sm">Include Web Enumeration</div>
+                                <div class="text-xs text-sp-white-muted">Run Nikto on web servers (adds ~15 min)</div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <!-- Active Pipelines -->
+                    <div x-show="activePipelines.length > 0" class="bg-sp-black rounded p-3 border border-sp-grey-mid">
+                        <h4 class="text-sm font-semibold text-sp-white mb-2">Active Pipelines</h4>
+                        <div class="space-y-2">
+                            <template x-for="pipeline in activePipelines" :key="pipeline.id">
+                                <div class="flex items-center justify-between text-xs bg-sp-grey p-2 rounded">
+                                    <div>
+                                        <span class="font-mono text-sp-red" x-text="pipeline.target"></span>
+                                        <span class="text-sp-white-muted" x-text="' (' + pipeline.pipeline + ')'"></span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <div class="w-20 bg-sp-black rounded-full h-2 overflow-hidden">
+                                            <div class="bg-sp-red h-full transition-all" :style="'width: ' + pipeline.progress + '%'"></div>
+                                        </div>
+                                        <span :class="pipeline.status === 'completed' ? 'text-green-400' : 'text-yellow-400'" 
+                                              x-text="pipeline.status"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex gap-3 mt-6">
+                    <button @click="showPipelineModal = false" 
+                            class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded transition">
+                        Cancel
+                    </button>
+                    <button @click="startPipeline()" 
+                            class="flex-1 bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded font-semibold transition"
+                            :disabled="!newPipeline.target">
+                        🚀 Start Pipeline
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Project Create Modal -->
+        <div x-show="showProjectModal" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div class="bg-sp-dark rounded-lg p-6 w-full max-w-lg border border-sp-grey-mid glow-red" @click.away="showProjectModal = false">
+                <h3 class="text-lg font-bold mb-4 text-sp-white">📁 Create New Project</h3>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-sp-white-muted mb-1">Project Name *</label>
+                        <input type="text" x-model="newProject.name" 
+                               placeholder="e.g., Client ABC Pentest Q1 2025"
+                               class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white placeholder-sp-white-muted">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm text-sp-white-muted mb-1">Description</label>
+                        <textarea x-model="newProject.description" 
+                                  placeholder="Brief description of the engagement..."
+                                  rows="2"
+                                  class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white placeholder-sp-white-muted resize-none"></textarea>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm text-sp-white-muted mb-1">Target Network/Range</label>
+                        <input type="text" x-model="newProject.target_network" 
+                               placeholder="192.168.1.0/24"
+                               class="w-full bg-sp-grey border border-sp-grey-mid rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white placeholder-sp-white-muted font-mono">
+                    </div>
+
+                    <div class="bg-sp-grey/30 p-3 rounded border border-sp-grey-mid">
+                        <p class="text-xs text-sp-white-muted">
+                            💡 All hosts, scans, credentials, and findings will be saved to this project.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="flex gap-3 mt-6">
+                    <button @click="showProjectModal = false" 
+                            class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded transition">
+                        Cancel
+                    </button>
+                    <button @click="createProject()" 
+                            class="flex-1 bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded font-semibold transition"
+                            :disabled="!newProject.name.trim()">
+                        Create Project
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Project Details Slide-over -->
+        <div x-show="showProjectDetails && currentProject" x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0 transform translate-x-full"
+             x-transition:enter-end="opacity-100 transform translate-x-0"
+             x-transition:leave="transition ease-in duration-200"
+             x-transition:leave-start="opacity-100 transform translate-x-0"
+             x-transition:leave-end="opacity-0 transform translate-x-full"
+             class="fixed inset-y-0 right-0 w-96 bg-sp-dark border-l border-sp-grey-mid shadow-xl z-40 overflow-y-auto">
+            <div class="p-4">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-bold text-sp-white">📁 Project Details</h3>
+                    <button @click="showProjectDetails = false" class="text-sp-white-muted hover:text-white">✕</button>
+                </div>
+                
+                <template x-if="currentProject">
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="text-xl font-bold text-sp-red" x-text="currentProject.name"></h4>
+                            <p class="text-sm text-sp-white-muted" x-text="currentProject.description || 'No description'"></p>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-3 text-sm">
+                            <div class="bg-sp-grey p-3 rounded">
+                                <div class="text-sp-white-muted text-xs">Hosts</div>
+                                <div class="text-xl font-bold text-sp-white" x-text="(currentProject.hosts || []).length"></div>
+                            </div>
+                            <div class="bg-sp-grey p-3 rounded">
+                                <div class="text-sp-white-muted text-xs">Credentials</div>
+                                <div class="text-xl font-bold text-sp-white" x-text="(currentProject.credentials || []).length"></div>
+                            </div>
+                            <div class="bg-sp-grey p-3 rounded">
+                                <div class="text-sp-white-muted text-xs">Findings</div>
+                                <div class="text-xl font-bold text-sp-white" x-text="(currentProject.findings || []).length"></div>
+                            </div>
+                            <div class="bg-sp-grey p-3 rounded">
+                                <div class="text-sp-white-muted text-xs">Notes</div>
+                                <div class="text-xl font-bold text-sp-white" x-text="(currentProject.notes || []).length"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="text-xs text-sp-white-muted space-y-1">
+                            <p><span class="opacity-60">Created:</span> <span x-text="new Date(currentProject.created_at).toLocaleString()"></span></p>
+                            <p><span class="opacity-60">Updated:</span> <span x-text="new Date(currentProject.updated_at).toLocaleString()"></span></p>
+                            <p x-show="currentProject.target_network"><span class="opacity-60">Target:</span> <span class="font-mono" x-text="currentProject.target_network"></span></p>
+                        </div>
+                        
+                        <div class="pt-4 border-t border-sp-grey-mid">
+                            <button @click="deleteProject(currentProject.id)"
+                                    class="w-full bg-red-900/30 hover:bg-red-900/50 text-red-400 px-4 py-2 rounded text-sm transition">
+                                🗑️ Delete Project
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Credential Add Modal -->
+        <div x-show="showCredentialModal" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div class="bg-sp-dark rounded-lg p-6 w-full max-w-lg border border-sp-grey-mid" @click.away="showCredentialModal = false">
+                <h3 class="text-lg font-bold mb-4 text-sp-white">🔐 Add Credential</h3>
+                
+                <div class="space-y-3">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs text-sp-white-muted mb-1">Username *</label>
+                            <input type="text" x-model="newCredential.username" 
+                                   class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-sp-white-muted mb-1">Domain</label>
+                            <input type="text" x-model="newCredential.domain" 
+                                   class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white">
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs text-sp-white-muted mb-1">Password</label>
+                            <input type="text" x-model="newCredential.password" 
+                                   class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white font-mono">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-sp-white-muted mb-1">Hash</label>
+                            <input type="text" x-model="newCredential.hash" 
+                                   placeholder="NTLM / NTLMv2..."
+                                   class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white font-mono">
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs text-sp-white-muted mb-1">Host</label>
+                            <input type="text" x-model="newCredential.host" 
+                                   placeholder="192.168.1.10"
+                                   class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white font-mono">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-sp-white-muted mb-1">Service</label>
+                            <input type="text" x-model="newCredential.service" 
+                                   placeholder="SMB, SSH, RDP..."
+                                   class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white">
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-xs text-sp-white-muted mb-1">Source</label>
+                        <input type="text" x-model="newCredential.source" 
+                               placeholder="How was this obtained? (secretsdump, mimikatz, etc.)"
+                               class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-xs text-sp-white-muted mb-1">Notes</label>
+                        <textarea x-model="newCredential.notes" rows="2"
+                                  class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white resize-none"></textarea>
+                    </div>
+                </div>
+
+                <div class="flex gap-3 mt-6">
+                    <button @click="showCredentialModal = false" 
+                            class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded transition">
+                        Cancel
+                    </button>
+                    <button @click="addCredential()" 
+                            class="flex-1 bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded font-semibold transition"
+                            :disabled="!newCredential.username.trim()">
+                        Add Credential
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Note Add Modal -->
+        <div x-show="showNoteModal" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div class="bg-sp-dark rounded-lg p-6 w-full max-w-lg border border-sp-grey-mid" @click.away="showNoteModal = false">
+                <h3 class="text-lg font-bold mb-4 text-sp-white">📝 Add Note</h3>
+                
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs text-sp-white-muted mb-1">Title *</label>
+                        <input type="text" x-model="newNote.title" 
+                               class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white">
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs text-sp-white-muted mb-1">Category</label>
+                            <select x-model="newNote.category" 
+                                    class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red">
+                                <option value="general">General</option>
+                                <option value="recon">Reconnaissance</option>
+                                <option value="exploitation">Exploitation</option>
+                                <option value="post-exploit">Post-Exploitation</option>
+                                <option value="loot">Loot</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-sp-white-muted mb-1">Related Host</label>
+                            <input type="text" x-model="newNote.host" 
+                                   placeholder="192.168.1.10"
+                                   class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white font-mono">
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-xs text-sp-white-muted mb-1">Content *</label>
+                        <textarea x-model="newNote.content" rows="6"
+                                  placeholder="Enter your notes here..."
+                                  class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sp-red text-sp-white resize-none font-mono"></textarea>
+                    </div>
+                </div>
+
+                <div class="flex gap-3 mt-6">
+                    <button @click="showNoteModal = false" 
+                            class="flex-1 bg-sp-grey hover:bg-sp-grey-light px-4 py-2 rounded transition">
+                        Cancel
+                    </button>
+                    <button @click="addNote()" 
+                            class="flex-1 bg-sp-red hover:bg-sp-red-dark px-4 py-2 rounded font-semibold transition"
+                            :disabled="!newNote.title.trim() || !newNote.content.trim()">
+                        Add Note
                     </button>
                 </div>
             </div>
@@ -1787,6 +2369,58 @@
                 // Onboarding State
                 showOnboarding: !localStorage.getItem('goosestrike-onboarded'),
 
+                // Project Management State
+                projects: [],
+                currentProjectId: '',
+                currentProject: null,
+                showProjectModal: false,
+                showProjectDetails: false,
+                newProject: {
+                    name: '',
+                    description: '',
+                    target_network: '',
+                    scope: []
+                },
+                
+                // Credentials Manager State
+                credentials: [],
+                showCredentialModal: false,
+                newCredential: {
+                    username: '',
+                    password: '',
+                    hash: '',
+                    hash_type: '',
+                    domain: '',
+                    host: '',
+                    service: '',
+                    source: '',
+                    notes: ''
+                },
+                
+                // Notes State
+                projectNotes: [],
+                showNoteModal: false,
+                newNote: {
+                    title: '',
+                    content: '',
+                    category: 'general',
+                    host: ''
+                },
+                
+                // Exploit Suggestion State
+                exploitSuggestions: [],
+                exploitLoading: false,
+                
+                // Recon Pipeline State
+                showPipelineModal: false,
+                activePipelines: [],
+                newPipeline: {
+                    target: '',
+                    pipeline: 'standard',
+                    include_vuln_scan: false,
+                    include_web_enum: false
+                },
+
                 phases: [
                     {
                         id: 'recon',
@@ -1886,6 +2520,8 @@
                 async init() {
                     await this.checkStatus();
                     await this.checkRunningProcesses();
+                    await this.loadProjects();  // Load projects on init
+                    await this.loadActivePipelines();  // Load active pipelines
                     setInterval(() => this.checkStatus(), 30000);
                     setInterval(() => this.checkRunningProcesses(), 5000);
                     await this.loadProviders();
@@ -1966,6 +2602,330 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                         this.runningProcesses = data.running_processes || [];
                     } catch (e) { console.error('Failed to check processes:', e); }
                 },
+
+                // ============= PROJECT MANAGEMENT METHODS =============
+                async loadProjects() {
+                    try {
+                        const response = await fetch('/api/projects');
+                        const data = await response.json();
+                        this.projects = data.projects || [];
+                        this.currentProjectId = data.current_project_id || '';
+                        if (this.currentProjectId) {
+                            await this.loadCurrentProject();
+                        }
+                    } catch (e) { console.error('Failed to load projects:', e); }
+                },
+
+                async loadCurrentProject() {
+                    if (!this.currentProjectId) {
+                        this.currentProject = null;
+                        this.networkHosts = [];
+                        this.credentials = [];
+                        this.projectNotes = [];
+                        return;
+                    }
+                    try {
+                        const response = await fetch(`/api/projects/${this.currentProjectId}`);
+                        this.currentProject = await response.json();
+                        // Sync project data to local state
+                        this.networkHosts = this.currentProject.hosts || [];
+                        this.credentials = this.currentProject.credentials || [];
+                        this.projectNotes = this.currentProject.notes || [];
+                        // Refresh network map if visible
+                        if (this.activeTab === 'network-map') {
+                            this.refreshNetworkMap();
+                        }
+                    } catch (e) { console.error('Failed to load current project:', e); }
+                },
+
+                async selectProject() {
+                    if (this.currentProjectId) {
+                        try {
+                            await fetch(`/api/projects/${this.currentProjectId}/select`, { method: 'POST' });
+                            await this.loadCurrentProject();
+                        } catch (e) { console.error('Failed to select project:', e); }
+                    } else {
+                        this.currentProject = null;
+                        // Load hosts from non-project storage
+                        await this.refreshNetworkHosts();
+                    }
+                },
+
+                async createProject() {
+                    if (!this.newProject.name.trim()) return;
+                    try {
+                        const response = await fetch('/api/projects', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newProject)
+                        });
+                        const data = await response.json();
+                        if (data.status === 'success') {
+                            this.projects.push(data.project);
+                            this.currentProjectId = data.project.id;
+                            await this.loadCurrentProject();
+                            this.showProjectModal = false;
+                            this.newProject = { name: '', description: '', target_network: '', scope: [] };
+                            this.terminalHistory.push({
+                                type: 'success',
+                                content: `📁 Project "${data.project.name}" created and selected.`
+                            });
+                        }
+                    } catch (e) { console.error('Failed to create project:', e); }
+                },
+
+                async deleteProject(projectId) {
+                    if (!confirm('Delete this project and all its data?')) return;
+                    try {
+                        await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
+                        this.projects = this.projects.filter(p => p.id !== projectId);
+                        if (this.currentProjectId === projectId) {
+                            this.currentProjectId = '';
+                            this.currentProject = null;
+                        }
+                    } catch (e) { console.error('Failed to delete project:', e); }
+                },
+
+                // Credentials Management
+                async addCredential() {
+                    if (!this.currentProjectId) {
+                        alert('Please select a project first');
+                        return;
+                    }
+                    if (!this.newCredential.username.trim()) return;
+                    try {
+                        const response = await fetch(`/api/projects/${this.currentProjectId}/credentials`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newCredential)
+                        });
+                        const data = await response.json();
+                        if (data.status === 'success') {
+                            this.credentials.push(data.credential);
+                            this.showCredentialModal = false;
+                            this.newCredential = { username: '', password: '', hash: '', hash_type: '', domain: '', host: '', service: '', source: '', notes: '' };
+                        }
+                    } catch (e) { console.error('Failed to add credential:', e); }
+                },
+
+                async deleteCredential(credId) {
+                    if (!this.currentProjectId) return;
+                    try {
+                        await fetch(`/api/projects/${this.currentProjectId}/credentials/${credId}`, { method: 'DELETE' });
+                        this.credentials = this.credentials.filter(c => c.id !== credId);
+                    } catch (e) { console.error('Failed to delete credential:', e); }
+                },
+
+                // Notes Management
+                async addNote() {
+                    if (!this.currentProjectId) {
+                        alert('Please select a project first');
+                        return;
+                    }
+                    if (!this.newNote.title.trim() || !this.newNote.content.trim()) return;
+                    try {
+                        const response = await fetch(`/api/projects/${this.currentProjectId}/notes`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newNote)
+                        });
+                        const data = await response.json();
+                        if (data.status === 'success') {
+                            this.projectNotes.push(data.note);
+                            this.showNoteModal = false;
+                            this.newNote = { title: '', content: '', category: 'general', host: '' };
+                        }
+                    } catch (e) { console.error('Failed to add note:', e); }
+                },
+
+                async deleteNote(noteId) {
+                    if (!this.currentProjectId) return;
+                    try {
+                        await fetch(`/api/projects/${this.currentProjectId}/notes/${noteId}`, { method: 'DELETE' });
+                        this.projectNotes = this.projectNotes.filter(n => n.id !== noteId);
+                    } catch (e) { console.error('Failed to delete note:', e); }
+                },
+                
+                // ============= EXPLOIT SUGGESTION METHODS =============
+                async getExploitSuggestions(host) {
+                    if (!host) return;
+                    this.exploitLoading = true;
+                    this.exploitSuggestions = [];
+                    
+                    try {
+                        const response = await fetch('/api/exploits/suggest', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ host_ip: host.ip })
+                        });
+                        const data = await response.json();
+                        this.exploitSuggestions = data.suggestions || [];
+                        
+                        if (this.exploitSuggestions.length === 0) {
+                            this.terminalHistory.push({
+                                type: 'info',
+                                content: `No known exploits found for ${host.ip}. Try running a version scan first: nmap -sV ${host.ip}`
+                            });
+                        } else {
+                            this.terminalHistory.push({
+                                type: 'success',
+                                content: `Found ${this.exploitSuggestions.length} potential exploits for ${host.ip}`
+                            });
+                        }
+                    } catch (e) {
+                        console.error('Failed to get exploit suggestions:', e);
+                        this.terminalHistory.push({
+                            type: 'error',
+                            content: `Failed to analyze host: ${e.message}`
+                        });
+                    }
+                    this.exploitLoading = false;
+                },
+
+                async getAllExploitSuggestions() {
+                    if (!this.currentProjectId) {
+                        alert('Please select a project first');
+                        return;
+                    }
+                    this.exploitLoading = true;
+                    
+                    try {
+                        const response = await fetch('/api/exploits/suggest', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ all_hosts: true })
+                        });
+                        const data = await response.json();
+                        this.exploitSuggestions = data.suggestions || [];
+                        
+                        this.terminalHistory.push({
+                            type: 'success',
+                            content: `Analyzed ${data.hosts_analyzed} hosts. Found ${data.total} potential exploits.`
+                        });
+                    } catch (e) {
+                        console.error('Failed to get exploit suggestions:', e);
+                    }
+                    this.exploitLoading = false;
+                },
+
+                runMsfModule(module, targetIp) {
+                    const cmd = `msfconsole -q -x "use ${module}; set RHOSTS ${targetIp}; check"`;
+                    this.terminalInput = cmd;
+                    this.activeTab = 'terminal';
+                    this.terminalHistory.push({
+                        type: 'info',
+                        content: `Loaded MSF command: ${cmd}`
+                    });
+                },
+
+                runManualCheck(checkCmd, targetIp) {
+                    const cmd = checkCmd.replace(/TARGET/g, targetIp);
+                    this.terminalInput = cmd;
+                    this.activeTab = 'terminal';
+                },
+
+                async searchExploits(query) {
+                    try {
+                        const response = await fetch(`/api/exploits/search/${encodeURIComponent(query)}`);
+                        const data = await response.json();
+                        return data.results || [];
+                    } catch (e) {
+                        console.error('Failed to search exploits:', e);
+                        return [];
+                    }
+                },
+                // ============= END EXPLOIT SUGGESTIONS =============
+
+                // ============= RECON PIPELINE METHODS =============
+                async startPipeline() {
+                    if (!this.newPipeline.target) return;
+                    
+                    try {
+                        const response = await fetch('/api/recon/pipeline', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newPipeline)
+                        });
+                        const data = await response.json();
+                        
+                        if (data.status === 'started') {
+                            this.terminalHistory.push({
+                                type: 'success',
+                                content: `🚀 Pipeline started: ${data.message}\nPipeline ID: ${data.pipeline_id}\nEstimated time: ~${data.estimated_time} minutes`
+                            });
+                            
+                            // Start polling for pipeline status
+                            this.pollPipelineStatus(data.pipeline_id);
+                            
+                            // Reset form
+                            this.newPipeline.target = '';
+                            this.showPipelineModal = false;
+                        }
+                    } catch (e) {
+                        console.error('Failed to start pipeline:', e);
+                        this.terminalHistory.push({
+                            type: 'error',
+                            content: `Failed to start pipeline: ${e.message}`
+                        });
+                    }
+                },
+
+                async pollPipelineStatus(pipelineId) {
+                    const poll = async () => {
+                        try {
+                            const response = await fetch(`/api/recon/pipeline/${pipelineId}`);
+                            const data = await response.json();
+                            
+                            // Update active pipelines list
+                            const existing = this.activePipelines.find(p => p.id === pipelineId);
+                            if (existing) {
+                                Object.assign(existing, data);
+                            } else {
+                                this.activePipelines.push(data);
+                            }
+                            
+                            // Update hosts from pipeline
+                            if (data.hosts_discovered > 0) {
+                                await this.refreshNetworkHosts();
+                            }
+                            
+                            // Continue polling if not complete
+                            if (data.status === 'running') {
+                                setTimeout(poll, 5000);
+                            } else if (data.status === 'completed') {
+                                this.terminalHistory.push({
+                                    type: 'success',
+                                    content: `✅ Pipeline completed!\nTarget: ${data.target}\nHosts discovered: ${data.hosts_discovered}\nStages completed: ${data.total_stages}`
+                                });
+                                await this.refreshNetworkHosts();
+                            }
+                        } catch (e) {
+                            console.error('Failed to poll pipeline:', e);
+                        }
+                    };
+                    
+                    poll();
+                },
+
+                async loadActivePipelines() {
+                    try {
+                        const response = await fetch('/api/recon/pipelines');
+                        const data = await response.json();
+                        this.activePipelines = data.pipelines || [];
+                        
+                        // Resume polling for running pipelines
+                        for (const pipeline of this.activePipelines) {
+                            if (pipeline.status === 'running') {
+                                this.pollPipelineStatus(pipeline.id);
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Failed to load pipelines:', e);
+                    }
+                },
+                // ============= END RECON PIPELINE =============
+
+                // ============= END PROJECT MANAGEMENT =============
 
                 async loadProviders() {
                     try {
@@ -2572,6 +3532,11 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                         console.error('Failed to refresh network map:', e);
                     }
                     this.networkMapLoading = false;
+                },
+
+                async refreshNetworkHosts() {
+                    // Alias for refreshNetworkMap - loads hosts from API
+                    await this.refreshNetworkMap();
                 },
 
                 scanHost(ip) {
