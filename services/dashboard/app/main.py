@@ -12,6 +12,60 @@ from typing import Optional, Dict, Any, List
 import httpx
 import os
 import json
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+# Project data storage
+PROJECTS_DIR = Path("/app/data/projects")
+PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# In-memory project cache (loaded from disk)
+projects_db: Dict[str, Dict] = {}
+current_project_id: Optional[str] = None
+
+
+def load_projects():
+    """Load all projects from disk on startup"""
+    global projects_db
+    for project_file in PROJECTS_DIR.glob("*.json"):
+        try:
+            with open(project_file, 'r') as f:
+                project = json.load(f)
+                projects_db[project['id']] = project
+        except Exception as e:
+            print(f"Failed to load project {project_file}: {e}")
+
+
+def save_project(project_id: str):
+    """Save a project to disk"""
+    if project_id in projects_db:
+        project_file = PROJECTS_DIR / f"{project_id}.json"
+        with open(project_file, 'w') as f:
+            json.dump(projects_db[project_id], f, indent=2, default=str)
+
+
+def get_current_project() -> Optional[Dict]:
+    """Get the current active project"""
+    if current_project_id and current_project_id in projects_db:
+        return projects_db[current_project_id]
+    return None
+
+
+def add_to_project(category: str, data: Dict):
+    """Add data to the current project"""
+    project = get_current_project()
+    if project:
+        if category not in project:
+            project[category] = []
+        data['timestamp'] = datetime.now().isoformat()
+        project[category].append(data)
+        project['updated_at'] = datetime.now().isoformat()
+        save_project(project['id'])
+
+
+# Load existing projects on startup
+load_projects()
 
 app = FastAPI(
     title="StrikePackageGPT Dashboard",
@@ -77,6 +131,296 @@ class ScanRequest(BaseModel):
 class NetworkScanRequest(BaseModel):
     target: str
     scan_type: str = "os"  # ping, quick, os, full
+
+
+# Project Management Models
+class ProjectCreate(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    target_network: Optional[str] = None
+    scope: Optional[List[str]] = Field(default_factory=list)
+    
+    
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    target_network: Optional[str] = None
+    scope: Optional[List[str]] = None
+    notes: Optional[str] = None
+
+
+class CredentialCreate(BaseModel):
+    username: str
+    password: Optional[str] = None
+    hash: Optional[str] = None
+    hash_type: Optional[str] = None
+    domain: Optional[str] = None
+    host: Optional[str] = None
+    service: Optional[str] = None
+    source: Optional[str] = None
+    valid: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class FindingCreate(BaseModel):
+    title: str
+    severity: str = "info"  # critical, high, medium, low, info
+    host: Optional[str] = None
+    port: Optional[int] = None
+    service: Optional[str] = None
+    description: Optional[str] = None
+    evidence: Optional[str] = None
+    recommendation: Optional[str] = None
+    cve: Optional[str] = None
+    cvss: Optional[float] = None
+    tool: Optional[str] = None
+
+
+class NoteCreate(BaseModel):
+    title: str
+    content: str
+    category: Optional[str] = "general"  # general, recon, exploitation, post-exploit, loot
+    host: Optional[str] = None
+
+
+# ============= PROJECT MANAGEMENT ENDPOINTS =============
+
+@app.get("/api/projects")
+async def list_projects():
+    """List all projects"""
+    return {
+        "projects": list(projects_db.values()),
+        "current_project_id": current_project_id
+    }
+
+
+@app.post("/api/projects")
+async def create_project(project: ProjectCreate):
+    """Create a new project"""
+    global current_project_id
+    
+    project_id = str(uuid.uuid4())[:8]
+    now = datetime.now().isoformat()
+    
+    new_project = {
+        "id": project_id,
+        "name": project.name,
+        "description": project.description,
+        "target_network": project.target_network,
+        "scope": project.scope,
+        "created_at": now,
+        "updated_at": now,
+        "hosts": [],
+        "credentials": [],
+        "findings": [],
+        "scans": [],
+        "notes": [],
+        "sessions": [],
+        "evidence": [],
+        "attack_chains": []
+    }
+    
+    projects_db[project_id] = new_project
+    save_project(project_id)
+    
+    # Auto-select new project
+    current_project_id = project_id
+    
+    return {"status": "success", "project": new_project}
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project(project_id: str):
+    """Get a specific project"""
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return projects_db[project_id]
+
+
+@app.put("/api/projects/{project_id}")
+async def update_project(project_id: str, update: ProjectUpdate):
+    """Update a project"""
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    project = projects_db[project_id]
+    update_data = update.dict(exclude_unset=True)
+    
+    for key, value in update_data.items():
+        if value is not None:
+            project[key] = value
+    
+    project['updated_at'] = datetime.now().isoformat()
+    save_project(project_id)
+    
+    return {"status": "success", "project": project}
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+    """Delete a project"""
+    global current_project_id
+    
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Remove from memory
+    del projects_db[project_id]
+    
+    # Remove from disk
+    project_file = PROJECTS_DIR / f"{project_id}.json"
+    if project_file.exists():
+        project_file.unlink()
+    
+    # Update current project if needed
+    if current_project_id == project_id:
+        current_project_id = next(iter(projects_db), None)
+    
+    return {"status": "success", "message": "Project deleted"}
+
+
+@app.post("/api/projects/{project_id}/select")
+async def select_project(project_id: str):
+    """Select active project"""
+    global current_project_id
+    
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    current_project_id = project_id
+    return {"status": "success", "current_project_id": current_project_id}
+
+
+@app.get("/api/projects/current")
+async def get_current_project_api():
+    """Get the currently selected project"""
+    if not current_project_id or current_project_id not in projects_db:
+        return {"project": None}
+    return {"project": projects_db[current_project_id]}
+
+
+# Project Data Endpoints
+@app.post("/api/projects/{project_id}/credentials")
+async def add_credential(project_id: str, cred: CredentialCreate):
+    """Add a credential to a project"""
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    project = projects_db[project_id]
+    cred_data = cred.dict()
+    cred_data['id'] = str(uuid.uuid4())[:8]
+    cred_data['created_at'] = datetime.now().isoformat()
+    
+    project['credentials'].append(cred_data)
+    project['updated_at'] = datetime.now().isoformat()
+    save_project(project_id)
+    
+    return {"status": "success", "credential": cred_data}
+
+
+@app.get("/api/projects/{project_id}/credentials")
+async def list_credentials(project_id: str):
+    """List all credentials in a project"""
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"credentials": projects_db[project_id].get('credentials', [])}
+
+
+@app.delete("/api/projects/{project_id}/credentials/{cred_id}")
+async def delete_credential(project_id: str, cred_id: str):
+    """Delete a credential from a project"""
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    project = projects_db[project_id]
+    project['credentials'] = [c for c in project.get('credentials', []) if c.get('id') != cred_id]
+    project['updated_at'] = datetime.now().isoformat()
+    save_project(project_id)
+    
+    return {"status": "success"}
+
+
+@app.post("/api/projects/{project_id}/findings")
+async def add_finding(project_id: str, finding: FindingCreate):
+    """Add a finding to a project"""
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    project = projects_db[project_id]
+    finding_data = finding.dict()
+    finding_data['id'] = str(uuid.uuid4())[:8]
+    finding_data['created_at'] = datetime.now().isoformat()
+    
+    project['findings'].append(finding_data)
+    project['updated_at'] = datetime.now().isoformat()
+    save_project(project_id)
+    
+    return {"status": "success", "finding": finding_data}
+
+
+@app.get("/api/projects/{project_id}/findings")
+async def list_findings(project_id: str):
+    """List all findings in a project"""
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"findings": projects_db[project_id].get('findings', [])}
+
+
+@app.delete("/api/projects/{project_id}/findings/{finding_id}")
+async def delete_finding(project_id: str, finding_id: str):
+    """Delete a finding from a project"""
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    project = projects_db[project_id]
+    project['findings'] = [f for f in project.get('findings', []) if f.get('id') != finding_id]
+    project['updated_at'] = datetime.now().isoformat()
+    save_project(project_id)
+    
+    return {"status": "success"}
+
+
+@app.post("/api/projects/{project_id}/notes")
+async def add_note(project_id: str, note: NoteCreate):
+    """Add a note to a project"""
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    project = projects_db[project_id]
+    note_data = note.dict()
+    note_data['id'] = str(uuid.uuid4())[:8]
+    note_data['created_at'] = datetime.now().isoformat()
+    
+    project['notes'].append(note_data)
+    project['updated_at'] = datetime.now().isoformat()
+    save_project(project_id)
+    
+    return {"status": "success", "note": note_data}
+
+
+@app.get("/api/projects/{project_id}/notes")
+async def list_notes(project_id: str):
+    """List all notes in a project"""
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"notes": projects_db[project_id].get('notes', [])}
+
+
+@app.delete("/api/projects/{project_id}/notes/{note_id}")
+async def delete_note(project_id: str, note_id: str):
+    """Delete a note from a project"""
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    project = projects_db[project_id]
+    project['notes'] = [n for n in project.get('notes', []) if n.get('id') != note_id]
+    project['updated_at'] = datetime.now().isoformat()
+    save_project(project_id)
+    
+    return {"status": "success"}
+
+
+# ============= END PROJECT MANAGEMENT =============
 
 
 @app.get("/health")
@@ -278,6 +622,70 @@ async def execute_command(request: CommandRequest):
         raise HTTPException(status_code=504, detail="Command execution timed out")
 
 
+@app.websocket("/ws/terminal")
+async def websocket_terminal(websocket: WebSocket):
+    """WebSocket endpoint for streaming terminal output from Kali executor"""
+    import websockets
+    import asyncio
+    
+    await websocket.accept()
+    print("Client WebSocket connected")
+    
+    kali_ws = None
+    try:
+        # Wait for command from client
+        data = await websocket.receive_text()
+        print(f"Received command request: {data}")
+        
+        # Connect to kali-executor WebSocket with extended timeouts for long scans
+        kali_ws_url = "ws://strikepackage-kali-executor:8002/ws/execute"
+        print(f"Connecting to kali-executor at {kali_ws_url}")
+        
+        # Set ping_interval=30s and ping_timeout=3600s (1 hour) for long-running scans
+        kali_ws = await websockets.connect(
+            kali_ws_url,
+            ping_interval=30,
+            ping_timeout=3600,
+            close_timeout=10
+        )
+        print("Connected to kali-executor")
+        
+        # Send command to kali
+        await kali_ws.send(data)
+        print("Command sent to kali-executor")
+        
+        # Stream responses back to client with keepalive
+        last_activity = asyncio.get_event_loop().time()
+        
+        async for message in kali_ws:
+            last_activity = asyncio.get_event_loop().time()
+            print(f"Received from kali: {message[:100]}...")
+            await websocket.send_text(message)
+            
+            # Check if complete
+            try:
+                import json
+                msg_data = json.loads(message)
+                if msg_data.get("type") == "complete":
+                    print("Command complete")
+                    break
+            except:
+                pass
+                
+    except WebSocketDisconnect:
+        print("Client disconnected")
+    except Exception as e:
+        print(f"WebSocket terminal error: {type(e).__name__}: {e}")
+        try:
+            import json
+            await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
+        except:
+            pass
+    finally:
+        if kali_ws:
+            await kali_ws.close()
+
+
 # ============== Scan Management ==============
 
 @app.post("/api/scan")
@@ -400,11 +808,13 @@ async def start_network_scan(request: NetworkScanRequest):
     
     # Build nmap command based on scan type
     # Use -T4 for faster timing, --stats-every for progress, --min-hostgroup for parallel scanning
+    # --disable-arp-ping prevents false positives from routers with proxy ARP
+    # MAC addresses are collected automatically in XML output for local network scans
     scan_commands = {
-        "ping": f"nmap -sn -T4 --min-hostgroup 64 {request.target} -oX - --stats-every 1s",
-        "quick": f"nmap -T4 -F --top-ports 100 --min-hostgroup 32 {request.target} -oX - --stats-every 1s",
-        "os": f"nmap -T4 -O --osscan-guess --max-os-tries 1 --min-hostgroup 16 {request.target} -oX - --stats-every 2s",
-        "full": f"nmap -T4 -sS -sV -O --version-light -p- --min-hostgroup 8 {request.target} -oX - --stats-every 2s"
+        "ping": f"nmap -sn -T4 --disable-arp-ping --min-hostgroup 64 {request.target} -oX - --stats-every 1s",
+        "quick": f"nmap -T4 -sS -Pn --disable-arp-ping -F --top-ports 100 --min-hostgroup 32 {request.target} -oX - --stats-every 1s",
+        "os": f"nmap -T4 -sS -Pn --disable-arp-ping -O --osscan-guess --max-os-tries 1 --min-hostgroup 16 {request.target} -oX - --stats-every 2s",
+        "full": f"nmap -T4 -sS -Pn --disable-arp-ping -sV -O --version-light -p- --min-hostgroup 8 {request.target} -oX - --stats-every 2s"
     }
     
     command = scan_commands.get(request.scan_type, scan_commands["quick"])
@@ -762,8 +1172,909 @@ async def get_network_scan(scan_id: str):
 
 @app.get("/api/network/hosts")
 async def get_network_hosts():
-    """Get all discovered network hosts"""
+    """Get all discovered network hosts (from current project if selected)"""
+    project = get_current_project()
+    if project:
+        return {"hosts": project.get('hosts', []), "project_id": project['id']}
     return {"hosts": network_hosts}
+
+
+class HostDiscoveryRequest(BaseModel):
+    """Request to add discovered hosts from terminal commands"""
+    hosts: List[Dict[str, Any]]
+    source: str = "terminal"  # terminal, scan, import
+
+
+@app.post("/api/network/hosts/discover")
+async def discover_hosts(request: HostDiscoveryRequest):
+    """Add hosts discovered from terminal commands (e.g., nmap scans)"""
+    global network_hosts
+    
+    project = get_current_project()
+    hosts_list = project.get('hosts', []) if project else network_hosts
+    
+    added = 0
+    updated = 0
+    
+    for host in request.hosts:
+        if not host.get("ip"):
+            continue
+            
+        # Ensure host has required fields
+        host.setdefault("hostname", "")
+        host.setdefault("mac", "")
+        host.setdefault("vendor", "")
+        host.setdefault("os_type", "")
+        host.setdefault("os_details", "")
+        host.setdefault("ports", [])
+        host.setdefault("source", request.source)
+        
+        # Check if host already exists
+        existing = next((h for h in hosts_list if h["ip"] == host["ip"]), None)
+        if existing:
+            # Update existing host - merge ports
+            existing_ports = {(p["port"], p.get("protocol", "tcp")) for p in existing.get("ports", [])}
+            for port in host.get("ports", []):
+                port_key = (port["port"], port.get("protocol", "tcp"))
+                if port_key not in existing_ports:
+                    existing["ports"].append(port)
+            
+            # Update other fields if they have new info
+            for field in ["hostname", "mac", "vendor", "os_type", "os_details"]:
+                if host.get(field) and not existing.get(field):
+                    existing[field] = host[field]
+            
+            updated += 1
+        else:
+            hosts_list.append(host)
+            if not project:
+                network_hosts.append(host)
+            added += 1
+    
+    # Save to project if active
+    if project:
+        project['hosts'] = hosts_list
+        project['updated_at'] = datetime.now().isoformat()
+        save_project(project['id'])
+    
+    return {
+        "status": "success",
+        "added": added,
+        "updated": updated,
+        "total_hosts": len(hosts_list),
+        "project_id": project['id'] if project else None
+    }
+
+
+@app.delete("/api/network/hosts")
+async def clear_network_hosts():
+    """Clear all discovered network hosts"""
+    global network_hosts
+    
+    project = get_current_project()
+    if project:
+        count = len(project.get('hosts', []))
+        project['hosts'] = []
+        project['updated_at'] = datetime.now().isoformat()
+        save_project(project['id'])
+        return {"status": "success", "cleared": count, "project_id": project['id']}
+    
+    count = len(network_hosts)
+    network_hosts = []
+    return {"status": "success", "cleared": count}
+
+
+@app.delete("/api/network/hosts/{ip}")
+async def delete_network_host(ip: str):
+    """Delete a specific network host by IP"""
+    global network_hosts
+    
+    project = get_current_project()
+    if project:
+        hosts = project.get('hosts', [])
+        original_count = len(hosts)
+        project['hosts'] = [h for h in hosts if h.get("ip") != ip]
+        
+        if len(project['hosts']) < original_count:
+            project['updated_at'] = datetime.now().isoformat()
+            save_project(project['id'])
+            return {"status": "success", "deleted": ip}
+        raise HTTPException(status_code=404, detail=f"Host {ip} not found")
+    
+    original_count = len(network_hosts)
+    network_hosts = [h for h in network_hosts if h.get("ip") != ip]
+    
+    if len(network_hosts) == original_count:
+        raise HTTPException(status_code=404, detail="Host not found")
+    
+    return {"status": "success", "deleted": ip}
+
+
+# ===========================================
+# Explain API
+# ===========================================
+class ExplainRequest(BaseModel):
+    type: str  # port, service, tool, finding
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/api/explain")
+async def explain_context(request: ExplainRequest):
+    """Get AI explanation for security concepts"""
+    try:
+        # Build explanation prompt
+        prompt = build_explain_prompt(request.type, request.context)
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{HACKGPT_API_URL}/chat",
+                json={
+                    "message": prompt,
+                    "provider": "ollama",
+                    "model": "llama3.2",
+                    "context": "explain"
+                },
+                timeout=60.0
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                # Parse the response into structured format
+                return parse_explain_response(request.type, request.context, data.get("response", ""))
+            
+            # Fallback to local explanation
+            return get_local_explanation(request.type, request.context)
+    except Exception as e:
+        return get_local_explanation(request.type, request.context)
+
+
+def build_explain_prompt(type: str, context: Dict[str, Any]) -> str:
+    """Build an explanation prompt for the LLM"""
+    prompts = {
+        "port": f"Explain port {context.get('port', 'unknown')}/{context.get('protocol', 'tcp')} for penetration testing. Include: what service typically runs on it, common vulnerabilities, and recommended enumeration commands.",
+        "service": f"Explain the {context.get('service', 'unknown')} service for penetration testing. Include: purpose, common vulnerabilities, and exploitation techniques.",
+        "tool": f"Explain the {context.get('tool', 'unknown')} penetration testing tool. Include: purpose, key features, common usage, and example commands.",
+        "finding": f"Explain this security finding: {context.get('title', 'Unknown')}. Context: {context.get('description', 'N/A')}. Include: impact, remediation, and exploitation potential."
+    }
+    return prompts.get(type, f"Explain: {context}")
+
+
+def parse_explain_response(type: str, context: Dict[str, Any], response: str) -> Dict[str, Any]:
+    """Parse LLM response into structured explanation"""
+    return {
+        "title": get_explain_title(type, context),
+        "description": response,
+        "recommendations": extract_recommendations(response),
+        "warnings": extract_warnings(type, context),
+        "example": extract_example(response)
+    }
+
+
+def get_explain_title(type: str, context: Dict[str, Any]) -> str:
+    """Get title for explanation"""
+    if type == "port":
+        return f"Port {context.get('port', '?')}/{context.get('protocol', 'tcp')}"
+    elif type == "service":
+        return f"Service: {context.get('service', 'Unknown')}"
+    elif type == "tool":
+        return f"Tool: {context.get('tool', 'Unknown')}"
+    elif type == "finding":
+        return context.get('title', 'Security Finding')
+    return "Explanation"
+
+
+def extract_recommendations(response: str) -> List[str]:
+    """Extract recommendations from response"""
+    recs = []
+    lines = response.split('\n')
+    in_recs = False
+    
+    for line in lines:
+        line = line.strip()
+        if any(word in line.lower() for word in ['recommend', 'suggestion', 'should', 'try']):
+            in_recs = True
+        if in_recs and line.startswith(('-', '*', '•', '1', '2', '3')):
+            recs.append(line.lstrip('-*•123456789. '))
+            if len(recs) >= 5:
+                break
+    
+    if not recs:
+        return ["Check for known vulnerabilities", "Look for default credentials", "Document findings"]
+    return recs
+
+
+def extract_warnings(type: str, context: Dict[str, Any]) -> List[str]:
+    """Extract or generate warnings"""
+    warnings = []
+    
+    if type == "finding" and context.get("severity") in ["critical", "high"]:
+        warnings.append("This is a high-severity finding - proceed with caution")
+    
+    if type == "port":
+        port = context.get("port")
+        if port in [21, 23, 445]:
+            warnings.append("This port is commonly targeted in attacks")
+        if port == 3389:
+            warnings.append("Check for BlueKeep (CVE-2019-0708) vulnerability")
+    
+    return warnings
+
+
+def extract_example(response: str) -> Optional[str]:
+    """Extract example commands from response"""
+    import re
+    
+    # Look for code blocks
+    code_match = re.search(r'```(?:\w+)?\n(.*?)```', response, re.DOTALL)
+    if code_match:
+        return code_match.group(1).strip()
+    
+    # Look for command-like lines
+    for line in response.split('\n'):
+        line = line.strip()
+        if line.startswith(('$', '#', 'nmap', 'nikto', 'gobuster', 'sqlmap')):
+            return line.lstrip('$# ')
+    
+    return None
+
+
+def get_local_explanation(type: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    """Get local fallback explanation"""
+    port_info = {
+        21: ("FTP - File Transfer Protocol", "Anonymous access, weak credentials, version exploits"),
+        22: ("SSH - Secure Shell", "Brute force, key-based exploits, old versions"),
+        23: ("Telnet", "Clear text credentials, always a finding"),
+        25: ("SMTP", "Open relay, user enumeration"),
+        53: ("DNS", "Zone transfers, cache poisoning"),
+        80: ("HTTP", "Web vulnerabilities, directory enum"),
+        443: ("HTTPS", "Same as HTTP + SSL/TLS issues"),
+        445: ("SMB", "EternalBlue, null sessions, share enum"),
+        3306: ("MySQL", "Default creds, SQL injection"),
+        3389: ("RDP", "BlueKeep, credential attacks"),
+        5432: ("PostgreSQL", "Default creds, trust auth"),
+        6379: ("Redis", "No auth by default, RCE possible")
+    }
+    
+    if type == "port":
+        port = context.get("port")
+        info = port_info.get(port, ("Unknown Service", "Fingerprint and enumerate"))
+        return {
+            "title": f"Port {port}/{context.get('protocol', 'tcp')}",
+            "description": f"**{info[0]}**\n\n{info[1]}",
+            "recommendations": ["Enumerate service version", "Check for default credentials", "Search for CVEs"],
+            "example": f"nmap -sV -sC -p {port} TARGET"
+        }
+    
+    return {
+        "title": get_explain_title(type, context),
+        "description": "Information not available. Try asking in the chat.",
+        "recommendations": ["Use the AI chat for detailed help"]
+    }
+
+
+# ===========================================
+# Exploit Suggestion Engine
+# ===========================================
+class ExploitSuggestionRequest(BaseModel):
+    host_ip: Optional[str] = None
+    service: Optional[str] = None
+    version: Optional[str] = None
+    port: Optional[int] = None
+    os_type: Optional[str] = None
+    all_hosts: bool = False  # If true, suggest for all project hosts
+
+
+@app.post("/api/exploits/suggest")
+async def suggest_exploits(request: ExploitSuggestionRequest):
+    """Get AI-powered exploit suggestions based on discovered services"""
+    project = get_current_project()
+    
+    suggestions = []
+    
+    # Build target list
+    targets = []
+    if request.all_hosts and project:
+        targets = project.get('hosts', [])
+    elif request.host_ip and project:
+        targets = [h for h in project.get('hosts', []) if h.get('ip') == request.host_ip]
+    elif request.service or request.version:
+        # Create synthetic target for service-based query
+        targets = [{
+            'ip': request.host_ip or 'target',
+            'ports': [{'port': request.port or 0, 'service': request.service, 'version': request.version}],
+            'os_type': request.os_type or ''
+        }]
+    
+    for host in targets:
+        host_suggestions = await get_exploit_suggestions_for_host(host)
+        if host_suggestions:
+            suggestions.extend(host_suggestions)
+    
+    # Deduplicate and sort by severity
+    seen = set()
+    unique_suggestions = []
+    for s in suggestions:
+        key = (s.get('exploit_name', ''), s.get('target', ''))
+        if key not in seen:
+            seen.add(key)
+            unique_suggestions.append(s)
+    
+    severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4}
+    unique_suggestions.sort(key=lambda x: severity_order.get(x.get('severity', 'info'), 4))
+    
+    return {
+        "suggestions": unique_suggestions[:20],  # Top 20
+        "total": len(unique_suggestions),
+        "hosts_analyzed": len(targets)
+    }
+
+
+async def get_exploit_suggestions_for_host(host: Dict) -> List[Dict]:
+    """Get exploit suggestions for a specific host"""
+    suggestions = []
+    host_ip = host.get('ip', 'unknown')
+    os_type = host.get('os_type', '').lower()
+    
+    for port_info in host.get('ports', []):
+        port = port_info.get('port')
+        service = port_info.get('service', '').lower()
+        version = port_info.get('version', '')
+        product = port_info.get('product', '')
+        
+        # Get known exploits for this service
+        port_exploits = get_known_exploits(port, service, version, product, os_type)
+        for exploit in port_exploits:
+            exploit['target'] = host_ip
+            exploit['target_port'] = port
+            exploit['target_service'] = service
+            suggestions.append(exploit)
+    
+    return suggestions
+
+
+def get_known_exploits(port: int, service: str, version: str, product: str, os_type: str) -> List[Dict]:
+    """Return known exploits for service/version combinations"""
+    exploits = []
+    
+    # SMB Exploits
+    if port == 445 or 'smb' in service or 'microsoft-ds' in service:
+        exploits.extend([
+            {
+                'exploit_name': 'EternalBlue (MS17-010)',
+                'cve': 'CVE-2017-0144',
+                'severity': 'critical',
+                'description': 'Remote code execution in SMBv1. Devastating for Windows 7/Server 2008.',
+                'msf_module': 'exploit/windows/smb/ms17_010_eternalblue',
+                'manual_check': 'nmap -p445 --script smb-vuln-ms17-010 TARGET',
+                'conditions': 'Windows systems with SMBv1 enabled'
+            },
+            {
+                'exploit_name': 'SMB Ghost (CVE-2020-0796)',
+                'cve': 'CVE-2020-0796',
+                'severity': 'critical',
+                'description': 'RCE in SMBv3 compression. Affects Windows 10 1903/1909.',
+                'msf_module': 'auxiliary/scanner/smb/smb_ms17_010',
+                'manual_check': 'nmap -p445 --script smb-vuln-cve-2020-0796 TARGET',
+                'conditions': 'Windows 10 version 1903 or 1909'
+            },
+            {
+                'exploit_name': 'SMB Null Session Enumeration',
+                'cve': None,
+                'severity': 'medium',
+                'description': 'Anonymous access to enumerate users, shares, and policies.',
+                'msf_module': 'auxiliary/scanner/smb/smb_enumshares',
+                'manual_check': 'enum4linux -a TARGET',
+                'conditions': 'Misconfigured SMB allowing null sessions'
+            }
+        ])
+    
+    # SSH Exploits
+    if port == 22 or 'ssh' in service:
+        if 'openssh' in product.lower():
+            if version:
+                try:
+                    ver_num = float(version.split('.')[0] + '.' + version.split('.')[1].split('p')[0])
+                    if ver_num < 7.7:
+                        exploits.append({
+                            'exploit_name': 'OpenSSH User Enumeration',
+                            'cve': 'CVE-2018-15473',
+                            'severity': 'low',
+                            'description': f'OpenSSH {version} may be vulnerable to user enumeration.',
+                            'msf_module': 'auxiliary/scanner/ssh/ssh_enumusers',
+                            'manual_check': 'nmap -p22 --script ssh-auth-methods TARGET',
+                            'conditions': 'OpenSSH < 7.7'
+                        })
+                except: pass
+        
+        exploits.append({
+            'exploit_name': 'SSH Credential Brute Force',
+            'cve': None,
+            'severity': 'info',
+            'description': 'Attempt common username/password combinations.',
+            'msf_module': 'auxiliary/scanner/ssh/ssh_login',
+            'manual_check': 'hydra -L users.txt -P passwords.txt ssh://TARGET',
+            'conditions': 'Weak or default credentials'
+        })
+    
+    # HTTP/HTTPS Exploits
+    if port in [80, 443, 8080, 8443] or 'http' in service:
+        exploits.extend([
+            {
+                'exploit_name': 'Web Application Scanning',
+                'cve': None,
+                'severity': 'info',
+                'description': 'Automated scan for common web vulnerabilities.',
+                'msf_module': None,
+                'manual_check': 'nikto -h TARGET:' + str(port),
+                'conditions': 'Web application present'
+            },
+            {
+                'exploit_name': 'Directory Enumeration',
+                'cve': None,
+                'severity': 'info',
+                'description': 'Find hidden directories and files.',
+                'msf_module': None,
+                'manual_check': f'gobuster dir -u http://TARGET:{port} -w /usr/share/wordlists/dirb/common.txt',
+                'conditions': 'Web server responding'
+            }
+        ])
+        
+        # Apache/nginx specific
+        if 'apache' in product.lower():
+            exploits.append({
+                'exploit_name': 'Apache mod_cgi RCE (Shellshock)',
+                'cve': 'CVE-2014-6271',
+                'severity': 'critical',
+                'description': 'Remote code execution via CGI scripts if Bash is vulnerable.',
+                'msf_module': 'exploit/multi/http/apache_mod_cgi_bash_env_exec',
+                'manual_check': 'nmap -p' + str(port) + ' --script http-shellshock TARGET',
+                'conditions': 'Apache with CGI and vulnerable Bash'
+            })
+    
+    # FTP Exploits
+    if port == 21 or 'ftp' in service:
+        exploits.extend([
+            {
+                'exploit_name': 'FTP Anonymous Access',
+                'cve': None,
+                'severity': 'medium',
+                'description': 'Anonymous FTP login may expose sensitive files.',
+                'msf_module': 'auxiliary/scanner/ftp/anonymous',
+                'manual_check': 'nmap -p21 --script ftp-anon TARGET',
+                'conditions': 'Anonymous access enabled'
+            }
+        ])
+        
+        if 'vsftpd' in product.lower() and '2.3.4' in version:
+            exploits.append({
+                'exploit_name': 'vsFTPd 2.3.4 Backdoor',
+                'cve': 'CVE-2011-2523',
+                'severity': 'critical',
+                'description': 'Backdoor command execution in vsFTPd 2.3.4.',
+                'msf_module': 'exploit/unix/ftp/vsftpd_234_backdoor',
+                'manual_check': 'Connect to FTP with username containing :)',
+                'conditions': 'vsFTPd version 2.3.4 exactly'
+            })
+    
+    # RDP Exploits  
+    if port == 3389 or 'rdp' in service or 'ms-wbt-server' in service:
+        exploits.extend([
+            {
+                'exploit_name': 'BlueKeep (CVE-2019-0708)',
+                'cve': 'CVE-2019-0708',
+                'severity': 'critical',
+                'description': 'Pre-authentication RCE in RDP. Wormable vulnerability.',
+                'msf_module': 'exploit/windows/rdp/cve_2019_0708_bluekeep_rce',
+                'manual_check': 'nmap -p3389 --script rdp-vuln-ms12-020 TARGET',
+                'conditions': 'Windows 7, Server 2008, Server 2008 R2'
+            },
+            {
+                'exploit_name': 'RDP Credential Brute Force',
+                'cve': None,
+                'severity': 'info',
+                'description': 'Attempt common credentials against RDP.',
+                'msf_module': 'auxiliary/scanner/rdp/rdp_scanner',
+                'manual_check': 'hydra -L users.txt -P passwords.txt rdp://TARGET',
+                'conditions': 'Weak or default credentials'
+            }
+        ])
+    
+    # MySQL
+    if port == 3306 or 'mysql' in service:
+        exploits.extend([
+            {
+                'exploit_name': 'MySQL Default/Weak Credentials',
+                'cve': None,
+                'severity': 'high',
+                'description': 'Check for root with no password or common credentials.',
+                'msf_module': 'auxiliary/scanner/mysql/mysql_login',
+                'manual_check': 'mysql -h TARGET -u root',
+                'conditions': 'Weak authentication configuration'
+            },
+            {
+                'exploit_name': 'MySQL UDF for Command Execution',
+                'cve': None,
+                'severity': 'high',
+                'description': 'If we have MySQL root, can potentially execute OS commands.',
+                'msf_module': 'exploit/multi/mysql/mysql_udf_payload',
+                'manual_check': 'After auth: SELECT sys_exec("whoami")',
+                'conditions': 'MySQL root access with FILE privilege'
+            }
+        ])
+    
+    # PostgreSQL
+    if port == 5432 or 'postgresql' in service:
+        exploits.append({
+            'exploit_name': 'PostgreSQL Default/Trust Authentication',
+            'cve': None,
+            'severity': 'high',
+            'description': 'Check for default credentials or trust authentication.',
+            'msf_module': 'auxiliary/scanner/postgres/postgres_login',
+            'manual_check': 'psql -h TARGET -U postgres',
+            'conditions': 'Default or trust authentication'
+        })
+    
+    # Redis
+    if port == 6379 or 'redis' in service:
+        exploits.append({
+            'exploit_name': 'Redis Unauthenticated Access',
+            'cve': None,
+            'severity': 'critical',
+            'description': 'Redis often runs without auth, allowing RCE via various techniques.',
+            'msf_module': 'auxiliary/scanner/redis/redis_server',
+            'manual_check': 'redis-cli -h TARGET INFO',
+            'conditions': 'No authentication required'
+        })
+    
+    # Telnet
+    if port == 23 or 'telnet' in service:
+        exploits.append({
+            'exploit_name': 'Telnet Service Active',
+            'cve': None,
+            'severity': 'medium',
+            'description': 'Telnet transmits credentials in cleartext. Finding by itself.',
+            'msf_module': 'auxiliary/scanner/telnet/telnet_login',
+            'manual_check': 'telnet TARGET',
+            'conditions': 'Telnet service running'
+        })
+    
+    return exploits
+
+
+@app.get("/api/exploits/search/{query}")
+async def search_exploits(query: str):
+    """Search for exploits using searchsploit"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{KALI_EXECUTOR_URL}/execute",
+                json={
+                    "command": f"searchsploit --json '{query}'",
+                    "timeout": 30
+                },
+                timeout=35.0
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                output = data.get('output', '')
+                
+                # Try to parse JSON output
+                try:
+                    import json as json_module
+                    # searchsploit --json output
+                    exploits_data = json_module.loads(output)
+                    return {
+                        "query": query,
+                        "results": exploits_data.get('RESULTS_EXPLOIT', [])[:20],
+                        "total": len(exploits_data.get('RESULTS_EXPLOIT', []))
+                    }
+                except:
+                    # Return raw output if not JSON
+                    return {
+                        "query": query,
+                        "raw_output": output,
+                        "results": []
+                    }
+    except Exception as e:
+        return {"query": query, "error": str(e), "results": []}
+
+
+# ===========================================
+# Automated Recon Pipeline
+# ===========================================
+class ReconPipelineRequest(BaseModel):
+    target: str  # IP, range, or hostname
+    pipeline: str = "standard"  # standard, quick, full, stealth
+    include_vuln_scan: bool = False
+    include_web_enum: bool = False
+
+
+# Store active pipelines
+active_pipelines: Dict[str, Dict] = {}
+
+
+@app.post("/api/recon/pipeline")
+async def start_recon_pipeline(request: ReconPipelineRequest):
+    """Start an automated recon pipeline"""
+    import asyncio
+    
+    pipeline_id = str(uuid.uuid4())[:8]
+    
+    # Define pipeline stages based on type
+    stages = []
+    
+    if request.pipeline == "quick":
+        stages = [
+            {"name": "Host Discovery", "command": f"nmap -sn -T4 --disable-arp-ping {request.target}", "timeout": 120},
+            {"name": "Quick Port Scan", "command": f"nmap -sS -T4 -Pn --disable-arp-ping -F {request.target}", "timeout": 300},
+        ]
+    elif request.pipeline == "stealth":
+        stages = [
+            {"name": "Stealth Discovery", "command": f"nmap -sn -T2 {request.target}", "timeout": 300},
+            {"name": "Slow Port Scan", "command": f"nmap -sS -T2 -Pn -p 21,22,23,25,80,443,445,3389 {request.target}", "timeout": 600},
+        ]
+    elif request.pipeline == "full":
+        stages = [
+            {"name": "Host Discovery", "command": f"nmap -sn -T4 --disable-arp-ping {request.target}", "timeout": 120},
+            {"name": "Full Port Scan", "command": f"nmap -sS -T4 -Pn --disable-arp-ping -p- {request.target}", "timeout": 1800},
+            {"name": "Service Detection", "command": f"nmap -sV -sC -T4 -Pn --disable-arp-ping -p- {request.target}", "timeout": 2400},
+            {"name": "OS Detection", "command": f"nmap -O -T4 -Pn --disable-arp-ping {request.target}", "timeout": 600},
+        ]
+    else:  # standard
+        stages = [
+            {"name": "Host Discovery", "command": f"nmap -sn -T4 --disable-arp-ping {request.target}", "timeout": 120},
+            {"name": "Top Ports Scan", "command": f"nmap -sS -T4 -Pn --disable-arp-ping --top-ports 1000 {request.target}", "timeout": 600},
+            {"name": "Service Detection", "command": f"nmap -sV -T4 -Pn --disable-arp-ping --top-ports 1000 {request.target}", "timeout": 900},
+            {"name": "OS Detection", "command": f"nmap -O -T4 -Pn --disable-arp-ping {request.target}", "timeout": 600},
+        ]
+    
+    # Add optional stages
+    if request.include_vuln_scan:
+        stages.append({
+            "name": "Vulnerability Scan",
+            "command": f"nmap --script vuln -T4 -Pn --disable-arp-ping {request.target}",
+            "timeout": 1800
+        })
+    
+    if request.include_web_enum:
+        stages.append({
+            "name": "Web Enumeration",
+            "command": f"nikto -h {request.target} -Format txt 2>/dev/null || echo 'Nikto scan complete'",
+            "timeout": 900
+        })
+    
+    # Initialize pipeline tracking
+    active_pipelines[pipeline_id] = {
+        "id": pipeline_id,
+        "target": request.target,
+        "pipeline": request.pipeline,
+        "stages": stages,
+        "current_stage": 0,
+        "status": "running",
+        "started_at": datetime.now().isoformat(),
+        "results": [],
+        "hosts_discovered": []
+    }
+    
+    # Start pipeline execution in background
+    asyncio.create_task(execute_pipeline(pipeline_id))
+    
+    return {
+        "status": "started",
+        "pipeline_id": pipeline_id,
+        "stages": len(stages),
+        "estimated_time": sum(s["timeout"] for s in stages) // 60,
+        "message": f"Pipeline '{request.pipeline}' started with {len(stages)} stages"
+    }
+
+
+async def execute_pipeline(pipeline_id: str):
+    """Execute pipeline stages sequentially"""
+    pipeline = active_pipelines.get(pipeline_id)
+    if not pipeline:
+        return
+    
+    for i, stage in enumerate(pipeline["stages"]):
+        pipeline["current_stage"] = i
+        pipeline["current_stage_name"] = stage["name"]
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{KALI_EXECUTOR_URL}/execute",
+                    json={
+                        "command": stage["command"],
+                        "timeout": stage["timeout"],
+                        "parse_output": True
+                    },
+                    timeout=float(stage["timeout"] + 30)
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    result = {
+                        "stage": stage["name"],
+                        "command": stage["command"],
+                        "success": True,
+                        "output": data.get("output", ""),
+                        "parsed": data.get("parsed", {}),
+                        "completed_at": datetime.now().isoformat()
+                    }
+                    
+                    # Extract hosts from parsed data
+                    if data.get("parsed", {}).get("hosts"):
+                        for host in data["parsed"]["hosts"]:
+                            if host not in pipeline["hosts_discovered"]:
+                                pipeline["hosts_discovered"].append(host)
+                                
+                                # Add to current project if selected
+                                project = get_current_project()
+                                if project:
+                                    existing = next((h for h in project.get('hosts', []) if h.get('ip') == host.get('ip')), None)
+                                    if not existing:
+                                        project['hosts'].append(host)
+                    
+                    pipeline["results"].append(result)
+                else:
+                    pipeline["results"].append({
+                        "stage": stage["name"],
+                        "success": False,
+                        "error": f"Request failed: {response.status_code}"
+                    })
+                    
+        except Exception as e:
+            pipeline["results"].append({
+                "stage": stage["name"],
+                "success": False,
+                "error": str(e)
+            })
+    
+    # Mark pipeline complete
+    pipeline["status"] = "completed"
+    pipeline["completed_at"] = datetime.now().isoformat()
+    
+    # Save project if active
+    project = get_current_project()
+    if project:
+        project['updated_at'] = datetime.now().isoformat()
+        save_project(project['id'])
+
+
+@app.get("/api/recon/pipeline/{pipeline_id}")
+async def get_pipeline_status(pipeline_id: str):
+    """Get status of a recon pipeline"""
+    if pipeline_id not in active_pipelines:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    
+    pipeline = active_pipelines[pipeline_id]
+    return {
+        "id": pipeline["id"],
+        "target": pipeline["target"],
+        "status": pipeline["status"],
+        "current_stage": pipeline["current_stage"],
+        "current_stage_name": pipeline.get("current_stage_name", ""),
+        "total_stages": len(pipeline["stages"]),
+        "progress": (pipeline["current_stage"] + 1) / len(pipeline["stages"]) * 100 if pipeline["stages"] else 0,
+        "hosts_discovered": len(pipeline["hosts_discovered"]),
+        "started_at": pipeline["started_at"],
+        "completed_at": pipeline.get("completed_at"),
+        "results": pipeline["results"]
+    }
+
+
+@app.get("/api/recon/pipelines")
+async def list_pipelines():
+    """List all recon pipelines"""
+    return {
+        "pipelines": [
+            {
+                "id": p["id"],
+                "target": p["target"],
+                "pipeline": p["pipeline"],
+                "status": p["status"],
+                "progress": (p["current_stage"] + 1) / len(p["stages"]) * 100 if p["stages"] else 0,
+                "hosts_discovered": len(p["hosts_discovered"]),
+                "started_at": p["started_at"]
+            }
+            for p in active_pipelines.values()
+        ]
+    }
+
+
+@app.delete("/api/recon/pipeline/{pipeline_id}")
+async def cancel_pipeline(pipeline_id: str):
+    """Cancel a running pipeline"""
+    if pipeline_id not in active_pipelines:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    
+    active_pipelines[pipeline_id]["status"] = "cancelled"
+    return {"status": "cancelled", "pipeline_id": pipeline_id}
+
+
+# ===========================================
+# Help API
+# ===========================================
+class HelpRequest(BaseModel):
+    question: str
+
+
+@app.post("/api/help")
+async def help_chat(request: HelpRequest):
+    """AI-powered help chat"""
+    try:
+        # Build help-focused prompt
+        prompt = f"""You are a helpful assistant for GooseStrike, an AI-powered penetration testing platform.
+Answer this user question concisely and helpfully. Focus on practical guidance.
+
+Question: {request.question}
+
+Provide a clear, helpful response. Use markdown formatting."""
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{HACKGPT_API_URL}/chat",
+                json={
+                    "message": prompt,
+                    "provider": "ollama",
+                    "model": "llama3.2",
+                    "context": "help"
+                },
+                timeout=60.0
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {"answer": data.get("response", "I can help with that!")}
+            
+            return {"answer": get_local_help(request.question)}
+    except Exception:
+        return {"answer": get_local_help(request.question)}
+
+
+def get_local_help(question: str) -> str:
+    """Get local fallback help"""
+    q = question.lower()
+    
+    if "scan" in q and "network" in q:
+        return """To scan a network:
+
+1. Go to the **Recon** phase in the sidebar
+2. Click **Quick Port Scan** or use the terminal
+3. Example command: `nmap -sV 10.10.10.0/24`
+
+You can also ask in the main chat for AI-powered guidance!"""
+    
+    if "c2" in q or "command and control" in q:
+        return """The **C2 tab** provides:
+
+- **Listeners**: Create HTTP/HTTPS/TCP listeners
+- **Agents**: Manage connected reverse shells  
+- **Payloads**: Generate various reverse shell payloads
+- **Tasks**: Queue commands for agents
+
+Click the C2 tab to get started!"""
+    
+    if "payload" in q or "shell" in q:
+        return """To generate payloads:
+
+1. Go to **C2 tab** → **Payloads** panel
+2. Set your LHOST (your IP) and LPORT
+3. Choose target OS and format
+4. Click **Generate Payload**
+
+Quick Payloads section has one-click common shells!"""
+    
+    return """I'm here to help with GooseStrike!
+
+I can assist with:
+- **Network scanning** and enumeration
+- **Vulnerability assessment** techniques
+- **C2 framework** usage
+- **Payload generation**
+- **Attack methodology** guidance
+
+What would you like to know?"""
 
 
 if __name__ == "__main__":
