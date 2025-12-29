@@ -11,6 +11,8 @@ services:
       - HACKGPT_API_URL=http://strikepackage-hackgpt-api:8001
       - LLM_ROUTER_URL=http://strikepackage-llm-router:8000
       - KALI_EXECUTOR_URL=http://strikepackage-kali-executor:8002
+    volumes:
+      - ./data/dashboard:/app/data
     depends_on:
       - hackgpt-api
       - llm-router
@@ -29,6 +31,8 @@ services:
     environment:
       - LLM_ROUTER_URL=http://strikepackage-llm-router:8000
       - KALI_EXECUTOR_URL=http://strikepackage-kali-executor:8002
+      - DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER:-ollama}
+      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-llama3.2}
     depends_on:
       - llm-router
       - kali-executor
@@ -65,15 +69,22 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      # Multi-endpoint support: comma-separated URLs
-      - OLLAMA_ENDPOINTS=${OLLAMA_ENDPOINTS:-http://192.168.1.50:11434}
+      # Prefer local Ollama container for self-contained setup
+      - OLLAMA_LOCAL_URL=${OLLAMA_LOCAL_URL:-http://strikepackage-ollama:11434}
+      # Network Ollama instances (Dell LLM box with larger models)
+      - OLLAMA_NETWORK_URLS=${OLLAMA_NETWORK_URLS:-http://192.168.1.50:11434}
       # Legacy single endpoint (fallback)
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://192.168.1.50:11434}
+      - OLLAMA_ENDPOINTS=${OLLAMA_ENDPOINTS:-http://strikepackage-ollama:11434}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://strikepackage-ollama:11434}
       # Load balancing: round-robin, random, failover
-      - LOAD_BALANCE_STRATEGY=${LOAD_BALANCE_STRATEGY:-round-robin}
+      - LOAD_BALANCE_STRATEGY=${LOAD_BALANCE_STRATEGY:-failover}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - strikepackage-net
     restart: unless-stopped
+    depends_on:
+      - ollama
 
   # Kali Linux - Security tools container
   kali:
@@ -93,26 +104,25 @@ services:
       - NET_RAW
     restart: unless-stopped
 
-  # Ollama - Local LLM (disabled - using Dell LLM box at 192.168.1.50)
-  # Uncomment to use local Ollama instead
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: strikepackage-ollama
-  #   ports:
-  #     - "11434:11434"
-  #   volumes:
-  #     - ollama-models:/root/.ollama
-  #   networks:
-  #     - strikepackage-net
-  #   restart: unless-stopped
-  #   # Uncomment for GPU support:
-  #   # deploy:
-  #   #   resources:
-  #   #     reservations:
-  #   #       devices:
-  #   #         - driver: nvidia
-  #   #           count: all
-  #   #           capabilities: [gpu]
+  # Ollama - Local LLM
+  ollama:
+    image: ollama/ollama:latest
+    container_name: strikepackage-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    networks:
+      - strikepackage-net
+    restart: unless-stopped
+    # GPU support (optional): uncomment if using NVIDIA GPU
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
 networks:
   strikepackage-net:

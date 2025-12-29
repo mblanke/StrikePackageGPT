@@ -3,56 +3,47 @@ FROM kalilinux/kali-rolling
 # Avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Update and install essential security tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Core utilities
-    curl \
-    wget \
-    git \
-    vim \
-    net-tools \
-    iputils-ping \
-    dnsutils \
-    # Reconnaissance tools
-    nmap \
-    masscan \
-    amass \
-    theharvester \
-    whatweb \
-    dnsrecon \
-    fierce \
-    # Web testing tools
-    nikto \
-    gobuster \
-    dirb \
-    sqlmap \
-    # Network tools
-    netcat-openbsd \
-    tcpdump \
-    wireshark-common \
-    hydra \
-    # Exploitation
-    metasploit-framework \
-    exploitdb \
-    # Scripting
-    python3 \
-    python3-pip \
-    python3-venv \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Configure apt to use reliable mirrors and retry on failure
+RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries && \
+    echo 'deb http://kali.download/kali kali-rolling main non-free non-free-firmware contrib' > /etc/apt/sources.list
 
-# Install additional Python tools
-RUN pip3 install --break-system-packages \
+# Install kali-linux-everything metapackage (600+ tools, ~15GB)
+# This includes: nmap, metasploit, burpsuite, wireshark, aircrack-ng, 
+# hashcat, john, hydra, sqlmap, nikto, wpscan, responder, crackmapexec,
+# enum4linux, gobuster, dirb, wfuzz, masscan, and hundreds more
+RUN apt-get update && \
+    apt-get install -y kali-linux-everything && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install additional Python tools and utilities for command logging
+# Install setuptools first to fix compatibility issues with Python 3.13
+RUN pip3 install --break-system-packages setuptools wheel && \
+    pip3 install --break-system-packages \
     requests \
     beautifulsoup4 \
     shodan \
     censys
 
+# Install jq and uuid-runtime for command logging
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    jq \
+    uuid-runtime \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create workspace directory
 WORKDIR /workspace
 
-# Copy entrypoint script
+# Copy scripts and fix line endings (in case of Windows CRLF)
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY command_logger.sh /usr/local/bin/command_logger.sh
+COPY capture_wrapper.sh /usr/local/bin/capture
+RUN sed -i 's/\r$//' /entrypoint.sh /usr/local/bin/command_logger.sh /usr/local/bin/capture && \
+    chmod +x /entrypoint.sh /usr/local/bin/command_logger.sh /usr/local/bin/capture
+
+# Create command history directory
+RUN mkdir -p /workspace/.command_history
 
 ENTRYPOINT ["/entrypoint.sh"]

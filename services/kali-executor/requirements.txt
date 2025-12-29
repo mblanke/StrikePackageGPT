@@ -3,3 +3,4 @@ uvicorn[standard]==0.32.1
 docker==7.1.0
 pydantic==2.10.2
 websockets==14.1
+httpx==0.28.1
