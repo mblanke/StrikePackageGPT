@@ -1,3 +1,14 @@
+FROM node:20-slim AS builder
+
+WORKDIR /build
+
+# Copy package files and JSX components
+COPY package.json vite.config.js ./
+COPY components/ ./components/
+
+# Install dependencies and build
+RUN npm install && npm run build
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -10,6 +21,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 COPY templates/ ./templates/
 COPY static/ ./static/
+
+# Copy built components from builder stage
+COPY --from=builder /build/static/dist/ ./static/dist/
 
 # Expose port
 EXPOSE 8080

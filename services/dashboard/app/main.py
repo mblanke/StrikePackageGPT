@@ -432,7 +432,15 @@ async def health_check():
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Main dashboard page"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "HACKGPT_API_URL": HACKGPT_API_URL,
+            "LLM_ROUTER_URL": LLM_ROUTER_URL,
+            "KALI_EXECUTOR_URL": KALI_EXECUTOR_URL,
+        },
+    )
 
 
 @app.get("/terminal", response_class=HTMLResponse)
@@ -475,6 +483,23 @@ async def get_running_processes():
     except:
         return {"running_processes": [], "count": 0}
 
+@app.get("/api/stream/processes")
+async def stream_running_processes():
+    """Server-Sent Events stream proxy that emits running processes periodically."""
+
+    async def event_generator():
+        while True:
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(f"{KALI_EXECUTOR_URL}/processes", timeout=10.0)
+                    data = response.json() if response.status_code == 200 else {"running_processes": [], "count": 0}
+                yield f"data: {json.dumps(data)}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            await asyncio.sleep(5)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 @app.get("/api/providers")
 async def get_providers():
@@ -500,6 +525,44 @@ async def get_tools():
             raise HTTPException(status_code=response.status_code, detail="Failed to get tools")
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="HackGPT API not available")
+
+# ============= PREFERENCES ENDPOINTS =============
+
+PREFERENCES_PATH = Path("/app/data/preferences.json")
+
+def load_preferences() -> Dict[str, Any]:
+    if PREFERENCES_PATH.exists():
+        try:
+            with open(PREFERENCES_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_preferences(prefs: Dict[str, Any]):
+    PREFERENCES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(PREFERENCES_PATH, "w") as f:
+        json.dump(prefs, f, indent=2)
+
+class Preferences(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    project_id: Optional[str] = None
+
+@app.get("/api/preferences")
+async def get_preferences(project_id: Optional[str] = None):
+    prefs = load_preferences()
+    if project_id and project_id in prefs:
+        return prefs[project_id]
+    return prefs.get("global", {})
+
+@app.post("/api/preferences")
+async def set_preferences(preferences: Preferences):
+    prefs = load_preferences()
+    key = preferences.project_id or "global"
+    prefs[key] = {"provider": preferences.provider, "model": preferences.model}
+    save_preferences(prefs)
+    return {"status": "saved"}
 
 
 @app.post("/api/chat")
@@ -2075,6 +2138,513 @@ I can assist with:
 - **Attack methodology** guidance
 
 What would you like to know?"""
+
+
+# ===========================================
+# CTF AI Agent
+# ===========================================
+class CTFAgentRequest(BaseModel):
+    message: str
+    category: str = "general"  # web, crypto, forensics, pwn, reversing, misc, general
+    context: Optional[str] = None  # Additional context like challenge description
+    hints_used: int = 0
+    provider: str = "ollama"
+    model: str = "llama3.2"
+
+
+class CTFHintRequest(BaseModel):
+    challenge_name: str
+    challenge_description: str
+    category: str
+    what_tried: Optional[str] = None
+    hint_level: int = 1  # 1=subtle, 2=moderate, 3=direct
+
+
+# CTF conversation history per session
+ctf_sessions: Dict[str, List[Dict]] = {}
+
+
+@app.post("/api/ctf/agent")
+async def ctf_agent_chat(request: CTFAgentRequest):
+    """AI agent specialized for CTF challenges"""
+    
+    # Build specialized CTF prompt based on category
+    system_prompt = get_ctf_system_prompt(request.category)
+    
+    # Build the full prompt
+    full_prompt = f"""{system_prompt}
+
+User's question/request:
+{request.message}
+
+{"Additional context: " + request.context if request.context else ""}
+
+Provide helpful, educational guidance. Focus on teaching the methodology rather than giving direct answers.
+If they seem stuck, offer progressive hints. Use markdown formatting."""
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{HACKGPT_API_URL}/chat",
+                json={
+                    "message": full_prompt,
+                    "provider": request.provider,
+                    "model": request.model,
+                    "context": "ctf_agent"
+                },
+                timeout=90.0
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                ai_response = data.get("response", "")
+                
+                # Extract any tool suggestions from response
+                tools = extract_ctf_tools(ai_response, request.category)
+                
+                return {
+                    "response": ai_response,
+                    "category": request.category,
+                    "suggested_tools": tools,
+                    "follow_up_questions": get_follow_up_questions(request.category)
+                }
+            
+            return {"response": get_ctf_fallback(request.category, request.message), "category": request.category}
+    except Exception as e:
+        return {"response": get_ctf_fallback(request.category, request.message), "error": str(e)}
+
+
+@app.post("/api/ctf/hint")
+async def get_ctf_hint(request: CTFHintRequest):
+    """Get progressive hints for a CTF challenge"""
+    
+    hint_prompts = {
+        1: "Give a very subtle hint that points them in the right direction without revealing the solution. Be cryptic but helpful.",
+        2: "Give a moderate hint that identifies the general technique or vulnerability type they should look for.",
+        3: "Give a direct hint that explains the specific approach needed, but still let them figure out the exact implementation."
+    }
+    
+    prompt = f"""You are a CTF mentor helping with a {request.category} challenge.
+
+Challenge: {request.challenge_name}
+Description: {request.challenge_description}
+{"What they've tried: " + request.what_tried if request.what_tried else ""}
+
+{hint_prompts.get(request.hint_level, hint_prompts[2])}
+
+Format your hint as:
+💡 **Hint Level {request.hint_level}**
+[Your hint here]
+
+{"🔧 **Suggested Tool/Command**" if request.hint_level >= 2 else ""}"""
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{HACKGPT_API_URL}/chat",
+                json={
+                    "message": prompt,
+                    "provider": "ollama",
+                    "model": "llama3.2",
+                    "context": "ctf_hint"
+                },
+                timeout=60.0
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "hint": data.get("response", ""),
+                    "level": request.hint_level,
+                    "next_level_available": request.hint_level < 3
+                }
+    except Exception:
+        pass
+    
+    # Fallback hints
+    return {
+        "hint": get_fallback_hint(request.category, request.hint_level),
+        "level": request.hint_level,
+        "next_level_available": request.hint_level < 3
+    }
+
+
+@app.post("/api/ctf/analyze")
+async def analyze_ctf_data(data: Dict[str, Any]):
+    """Analyze CTF data (encoded strings, hashes, files, etc.)"""
+    
+    input_data = data.get("input", "")
+    analysis_type = data.get("type", "auto")  # auto, encoding, hash, cipher, binary
+    
+    results = {
+        "input": input_data[:500],  # Truncate for display
+        "detections": [],
+        "suggestions": []
+    }
+    
+    # Auto-detect data type
+    if analysis_type == "auto" or analysis_type == "encoding":
+        # Check for Base64
+        import base64
+        import re
+        
+        if re.match(r'^[A-Za-z0-9+/]+=*$', input_data) and len(input_data) % 4 == 0:
+            try:
+                decoded = base64.b64decode(input_data).decode('utf-8', errors='ignore')
+                if decoded.isprintable() or len([c for c in decoded if c.isprintable()]) > len(decoded) * 0.7:
+                    results["detections"].append({
+                        "type": "Base64",
+                        "decoded": decoded[:500],
+                        "confidence": "high"
+                    })
+            except:
+                pass
+        
+        # Check for Hex
+        if re.match(r'^[0-9a-fA-F]+$', input_data) and len(input_data) % 2 == 0:
+            try:
+                decoded = bytes.fromhex(input_data).decode('utf-8', errors='ignore')
+                results["detections"].append({
+                    "type": "Hex",
+                    "decoded": decoded[:500],
+                    "confidence": "high"
+                })
+            except:
+                pass
+        
+        # Check for ROT13
+        import codecs
+        rot13 = codecs.decode(input_data, 'rot_13')
+        if rot13 != input_data:
+            results["detections"].append({
+                "type": "ROT13 (possible)",
+                "decoded": rot13[:500],
+                "confidence": "medium"
+            })
+    
+    # Check for hash patterns
+    if analysis_type == "auto" or analysis_type == "hash":
+        hash_patterns = {
+            r'^[a-f0-9]{32}$': "MD5",
+            r'^[a-f0-9]{40}$': "SHA1",
+            r'^[a-f0-9]{64}$': "SHA256",
+            r'^[a-f0-9]{128}$': "SHA512",
+            r'^\$2[ayb]\$.{56}$': "bcrypt",
+            r'^[a-f0-9]{32}:[a-f0-9]+$': "MD5 with salt",
+        }
+        
+        for pattern, hash_type in hash_patterns.items():
+            if re.match(pattern, input_data.lower()):
+                results["detections"].append({
+                    "type": f"Hash: {hash_type}",
+                    "suggestion": f"Try cracking with hashcat or john. Mode for {hash_type}",
+                    "confidence": "high"
+                })
+                results["suggestions"].append(f"hashcat -m <mode> '{input_data}' wordlist.txt")
+    
+    # Suggest tools based on input
+    if not results["detections"]:
+        results["suggestions"] = [
+            "Try CyberChef for multi-layer encoding",
+            "Check for custom/proprietary encoding",
+            "Look for patterns or repeated sequences",
+            "Try frequency analysis if it might be a cipher"
+        ]
+    
+    return results
+
+
+@app.get("/api/ctf/tools/{category}")
+async def get_ctf_tools(category: str):
+    """Get recommended tools for a CTF category"""
+    
+    tools = {
+        "web": [
+            {"name": "Burp Suite", "command": "burpsuite", "description": "Web proxy and scanner"},
+            {"name": "SQLMap", "command": "sqlmap -u 'URL' --dbs", "description": "SQL injection automation"},
+            {"name": "Nikto", "command": "nikto -h URL", "description": "Web vulnerability scanner"},
+            {"name": "Gobuster", "command": "gobuster dir -u URL -w wordlist", "description": "Directory brute-force"},
+            {"name": "WFuzz", "command": "wfuzz -c -w wordlist -u URL/FUZZ", "description": "Web fuzzer"},
+            {"name": "XXEinjector", "command": "xxeinjector", "description": "XXE injection tool"},
+        ],
+        "crypto": [
+            {"name": "CyberChef", "command": "https://gchq.github.io/CyberChef/", "description": "Encoding/decoding swiss army knife"},
+            {"name": "John the Ripper", "command": "john --wordlist=rockyou.txt hash.txt", "description": "Password cracker"},
+            {"name": "Hashcat", "command": "hashcat -m 0 hash.txt wordlist.txt", "description": "GPU password cracker"},
+            {"name": "RsaCtfTool", "command": "rsactftool -n N -e E --uncipher C", "description": "RSA attack tool"},
+            {"name": "xortool", "command": "xortool -l LENGTH file", "description": "XOR analysis"},
+        ],
+        "forensics": [
+            {"name": "Volatility", "command": "volatility -f dump.raw imageinfo", "description": "Memory forensics"},
+            {"name": "Binwalk", "command": "binwalk -e file", "description": "Firmware/file extraction"},
+            {"name": "Foremost", "command": "foremost -i image -o output", "description": "File carving"},
+            {"name": "Exiftool", "command": "exiftool file", "description": "Metadata extraction"},
+            {"name": "Steghide", "command": "steghide extract -sf image.jpg", "description": "Steganography"},
+            {"name": "Strings", "command": "strings file | grep -i flag", "description": "Extract strings"},
+        ],
+        "pwn": [
+            {"name": "GDB + Pwndbg", "command": "gdb ./binary", "description": "Debugger with pwn extensions"},
+            {"name": "Pwntools", "command": "python3 -c 'from pwn import *'", "description": "CTF exploitation library"},
+            {"name": "ROPgadget", "command": "ROPgadget --binary ./binary", "description": "ROP chain builder"},
+            {"name": "Checksec", "command": "checksec --file=./binary", "description": "Binary security checks"},
+            {"name": "One_gadget", "command": "one_gadget libc.so.6", "description": "Find one-shot RCE gadgets"},
+        ],
+        "reversing": [
+            {"name": "Ghidra", "command": "ghidra", "description": "NSA reverse engineering tool"},
+            {"name": "IDA Free", "command": "ida", "description": "Interactive disassembler"},
+            {"name": "Radare2", "command": "r2 -A ./binary", "description": "Reverse engineering framework"},
+            {"name": "Objdump", "command": "objdump -d ./binary", "description": "Disassembler"},
+            {"name": "Ltrace/Strace", "command": "ltrace ./binary", "description": "Library/system call tracer"},
+        ],
+        "misc": [
+            {"name": "CyberChef", "command": "https://gchq.github.io/CyberChef/", "description": "Swiss army knife"},
+            {"name": "dCode", "command": "https://www.dcode.fr/", "description": "Cipher identifier"},
+            {"name": "Wireshark", "command": "wireshark capture.pcap", "description": "Network analysis"},
+            {"name": "Sonic Visualiser", "command": "sonic-visualiser", "description": "Audio analysis"},
+        ]
+    }
+    
+    return {"category": category, "tools": tools.get(category, tools["misc"])}
+
+
+def get_ctf_system_prompt(category: str) -> str:
+    """Get specialized system prompt for CTF category"""
+    
+    base_prompt = """You are an expert CTF (Capture The Flag) mentor and security researcher. 
+You help players learn and improve their skills through educational guidance.
+Never give direct flag answers, but help them understand the methodology."""
+
+    category_prompts = {
+        "web": f"""{base_prompt}
+
+SPECIALTY: Web Security & Application Exploitation
+
+You're an expert in:
+- SQL Injection (SQLi), XSS, CSRF, SSRF, XXE
+- Authentication bypasses and session management
+- File upload vulnerabilities and LFI/RFI
+- Server-side template injection (SSTI)
+- JWT vulnerabilities and OAuth attacks
+- HTTP request smuggling
+- WebSocket vulnerabilities
+
+Always suggest checking: robots.txt, source code comments, HTTP headers, cookies.""",
+
+        "crypto": f"""{base_prompt}
+
+SPECIALTY: Cryptography & Code Breaking
+
+You're an expert in:
+- Classical ciphers (Caesar, Vigenere, substitution)
+- Modern crypto attacks (RSA, AES, DES weaknesses)
+- Hash cracking and rainbow tables
+- Encoding detection (Base64, hex, URL encoding)
+- Padding oracle attacks
+- XOR analysis and known-plaintext attacks
+- Elliptic curve cryptography
+
+Suggest tools: CyberChef, hashcat, john, RsaCtfTool, xortool.""",
+
+        "forensics": f"""{base_prompt}
+
+SPECIALTY: Digital Forensics & Incident Response
+
+You're an expert in:
+- Memory forensics (Volatility framework)
+- Disk image analysis
+- File carving and recovery
+- Network packet analysis (Wireshark)
+- Steganography detection
+- Metadata analysis
+- Log analysis and timeline reconstruction
+
+Always check: file signatures, hidden data, deleted files, metadata.""",
+
+        "pwn": f"""{base_prompt}
+
+SPECIALTY: Binary Exploitation & Pwn
+
+You're an expert in:
+- Buffer overflows (stack, heap)
+- Format string vulnerabilities
+- Return-oriented programming (ROP)
+- Shellcode development
+- ASLR/NX/PIE/Stack canary bypasses
+- Use-after-free and double-free
+- Race conditions
+
+Check protections first with checksec. Understand the binary before exploiting.""",
+
+        "reversing": f"""{base_prompt}
+
+SPECIALTY: Reverse Engineering
+
+You're an expert in:
+- Static analysis (Ghidra, IDA, radare2)
+- Dynamic analysis and debugging (GDB)
+- Decompilation and code reconstruction  
+- Malware analysis techniques
+- Obfuscation and anti-debugging bypasses
+- Protocol reverse engineering
+- Patching binaries
+
+Start with strings, file type, and basic static analysis before dynamic.""",
+
+        "misc": f"""{base_prompt}
+
+SPECIALTY: Miscellaneous CTF Challenges
+
+You're versatile in:
+- OSINT (Open Source Intelligence)
+- Trivia and research challenges
+- Programming and scripting puzzles
+- Audio/image analysis
+- QR codes and barcodes
+- Esoteric programming languages
+- Social engineering concepts
+
+Think outside the box. Check for hidden messages in unusual places."""
+    }
+    
+    return category_prompts.get(category, base_prompt)
+
+
+def extract_ctf_tools(response: str, category: str) -> List[Dict]:
+    """Extract tool suggestions from AI response"""
+    tools = []
+    
+    # Common tool patterns to look for
+    tool_patterns = {
+        "sqlmap": {"name": "SQLMap", "category": "web"},
+        "burp": {"name": "Burp Suite", "category": "web"},
+        "gobuster": {"name": "Gobuster", "category": "web"},
+        "nikto": {"name": "Nikto", "category": "web"},
+        "hashcat": {"name": "Hashcat", "category": "crypto"},
+        "john": {"name": "John the Ripper", "category": "crypto"},
+        "cyberchef": {"name": "CyberChef", "category": "crypto"},
+        "volatility": {"name": "Volatility", "category": "forensics"},
+        "binwalk": {"name": "Binwalk", "category": "forensics"},
+        "wireshark": {"name": "Wireshark", "category": "forensics"},
+        "ghidra": {"name": "Ghidra", "category": "reversing"},
+        "gdb": {"name": "GDB", "category": "pwn"},
+        "pwntools": {"name": "Pwntools", "category": "pwn"},
+        "checksec": {"name": "Checksec", "category": "pwn"},
+    }
+    
+    response_lower = response.lower()
+    for pattern, tool_info in tool_patterns.items():
+        if pattern in response_lower:
+            tools.append(tool_info)
+    
+    return tools[:5]  # Return top 5
+
+
+def get_follow_up_questions(category: str) -> List[str]:
+    """Get relevant follow-up questions for a category"""
+    
+    questions = {
+        "web": [
+            "What HTTP methods does the endpoint accept?",
+            "Have you checked for hidden parameters?",
+            "What does the source code reveal?",
+        ],
+        "crypto": [
+            "What's the key length or block size?",
+            "Do you see any patterns in the ciphertext?",
+            "Is this a known algorithm or custom?",
+        ],
+        "forensics": [
+            "What file type is it really (check magic bytes)?",
+            "Have you looked at the metadata?",
+            "Are there any hidden or deleted files?",
+        ],
+        "pwn": [
+            "What protections are enabled (checksec)?",
+            "Is there a stack canary leak possible?",
+            "What libc version is being used?",
+        ],
+        "reversing": [
+            "What's the program's main functionality?",
+            "Are there any anti-debugging tricks?",
+            "Have you identified the key functions?",
+        ],
+    }
+    
+    return questions.get(category, ["What have you tried so far?", "Can you share more details?"])
+
+
+def get_ctf_fallback(category: str, message: str) -> str:
+    """Fallback response when AI is unavailable"""
+    
+    fallbacks = {
+        "web": """For web challenges, start with:
+
+1. **Reconnaissance**: Check robots.txt, sitemap.xml, source comments
+2. **Identify the stack**: Server headers, error messages, file extensions
+3. **Test inputs**: Try SQLi, XSS, command injection on all inputs
+4. **Check auth**: Test for auth bypasses, weak sessions, JWT issues
+
+🔧 Tools: Burp Suite, SQLMap, Gobuster, dirb""",
+
+        "crypto": """For crypto challenges:
+
+1. **Identify the cipher**: Pattern analysis, key indicators
+2. **Check encoding**: Base64? Hex? Multiple layers?
+3. **Look for weaknesses**: Small keys, reused IVs, weak algorithms
+4. **Use tools**: CyberChef for quick decoding
+
+🔧 Tools: CyberChef, hashcat, john, dCode.fr""",
+
+        "forensics": """For forensics challenges:
+
+1. **File analysis**: `file`, `binwalk`, `strings`, `xxd`
+2. **Check metadata**: `exiftool`, hidden fields
+3. **Steganography**: `steghide`, `zsteg`, `stegsolve`
+4. **Memory/Disk**: Volatility, Autopsy, FTK
+
+🔧 Tools: binwalk, foremost, volatility, Wireshark""",
+
+        "pwn": """For pwn challenges:
+
+1. **Check protections**: `checksec ./binary`
+2. **Understand the binary**: Run it, analyze with GDB
+3. **Find vulnerabilities**: Buffer overflow? Format string?
+4. **Build exploit**: Pwntools makes it easier
+
+🔧 Tools: GDB + pwndbg, pwntools, ROPgadget, one_gadget""",
+
+        "reversing": """For reversing challenges:
+
+1. **Static analysis**: `file`, `strings`, Ghidra/IDA
+2. **Understand flow**: Find main(), trace execution
+3. **Dynamic analysis**: GDB, ltrace, strace
+4. **Patch if needed**: Modify jumps, bypass checks
+
+🔧 Tools: Ghidra, IDA Free, radare2, GDB"""
+    }
+    
+    return fallbacks.get(category, """I'm your CTF assistant! 
+
+I can help with:
+- 🌐 **Web**: SQLi, XSS, SSRF, auth bypasses
+- 🔐 **Crypto**: Encoding, ciphers, hash cracking
+- 🔍 **Forensics**: File analysis, memory, steganography
+- 💥 **Pwn**: Buffer overflows, ROP chains
+- 🔄 **Reversing**: Disassembly, debugging
+
+What category is your challenge?""")
+
+
+def get_fallback_hint(category: str, level: int) -> str:
+    """Get fallback hints when AI unavailable"""
+    
+    hints = {
+        1: "🔍 Look more carefully at the data you're given. There might be something hidden in plain sight.",
+        2: f"💡 For {category} challenges, make sure you've tried the standard tools and techniques for this category.",
+        3: f"🎯 Focus on the most common vulnerability types for {category}. Check the challenge description for subtle clues."
+    }
+    
+    return hints.get(level, hints[2])
 
 
 if __name__ == "__main__":

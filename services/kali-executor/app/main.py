@@ -4,6 +4,7 @@ Executes commands in the Kali container via Docker SDK.
 """
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import docker
@@ -557,6 +558,23 @@ def _run_command_sync(container, command, working_dir):
         workdir=working_dir
     )
 
+@app.get("/stream/processes")
+async def stream_running_processes():
+    """Server-Sent Events stream of running security processes.
+    Emits JSON events with current process list every 5 seconds.
+    """
+
+    async def event_generator():
+        while True:
+            try:
+                data = await get_running_processes()
+                yield f"data: {json.dumps(data)}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            await asyncio.sleep(5)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 @app.post("/execute", response_model=CommandResult)
 async def execute_command(request: CommandRequest):
     """Execute a command in the Kali container."""
@@ -622,6 +640,52 @@ async def execute_command(request: CommandRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Execution error: {str(e)}")
 
+@app.websocket("/ws/execute/{command_id}")
+async def websocket_execute(websocket: WebSocket, command_id: str):
+    """WebSocket endpoint for streaming command output in real-time."""
+    await websocket.accept()
+    
+    if command_id not in running_commands:
+        await websocket.send_json({"error": "Command not found"})
+        await websocket.close()
+        return
+    
+    cmd_info = running_commands[command_id]
+    
+    try:
+        # Stream output as it becomes available
+        last_stdout_len = 0
+        last_stderr_len = 0
+        
+        while cmd_info["status"] == "running":
+            current_stdout = cmd_info.get("stdout", "")
+            current_stderr = cmd_info.get("stderr", "")
+            
+            # Send new stdout
+            if len(current_stdout) > last_stdout_len:
+                new_stdout = current_stdout[last_stdout_len:]
+                await websocket.send_json({"type": "stdout", "data": new_stdout})
+                last_stdout_len = len(current_stdout)
+            
+            # Send new stderr
+            if len(current_stderr) > last_stderr_len:
+                new_stderr = current_stderr[last_stderr_len:]
+                await websocket.send_json({"type": "stderr", "data": new_stderr})
+                last_stderr_len = len(current_stderr)
+            
+            await asyncio.sleep(0.5)
+        
+        # Send final status
+        await websocket.send_json({
+            "type": "complete",
+            "status": cmd_info["status"],
+            "exit_code": cmd_info.get("exit_code"),
+            "duration": cmd_info.get("duration_seconds"),
+        })
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await websocket.close()
 
 @app.post("/execute/async")
 async def execute_command_async(request: CommandRequest):
