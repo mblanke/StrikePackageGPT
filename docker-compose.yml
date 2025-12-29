@@ -11,6 +11,8 @@ services:
       - HACKGPT_API_URL=http://strikepackage-hackgpt-api:8001
       - LLM_ROUTER_URL=http://strikepackage-llm-router:8000
       - KALI_EXECUTOR_URL=http://strikepackage-kali-executor:8002
+    volumes:
+      - ./data/dashboard:/app/data
     depends_on:
       - hackgpt-api
       - llm-router

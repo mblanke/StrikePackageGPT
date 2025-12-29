@@ -294,11 +294,10 @@ def parse_nmap_xml(xml_output: str) -> List[Dict[str, Any]]:
             if not host["os_type"] and host["ports"]:
                 host["os_type"] = infer_os_from_ports(host["ports"])
             
-            # Only include hosts that have either:
-            # 1. At least one open port (proves real service)
-            # 2. A valid MAC address (proves real local device)
-            # This filters out false positives from router proxy ARP
-            if host["ip"] and (host["ports"] or host["mac"]):
+            # Only include hosts with at least one OPEN port
+            # This prevents false positives from proxy ARP responses
+            # where routers respond for all IPs even if device is offline
+            if host["ip"] and host["ports"]:
                 hosts.append(host)
                 
     except ET.ParseError as e:
@@ -311,7 +310,7 @@ def parse_nmap_text(output: str) -> List[Dict[str, Any]]:
     """Parse nmap text output as fallback.
     
     Only returns hosts that have at least one OPEN port.
-    Hosts that respond to ping/ARP but have no open ports are filtered out.
+    Filters out false positives from router proxy ARP (where all IPs appear "up").
     """
     hosts = []
     current_host = None
