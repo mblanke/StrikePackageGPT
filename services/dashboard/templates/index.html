@@ -8,6 +8,7 @@
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="/static/dist/components.js"></script>
     <link rel="icon" type="image/png" href="/static/icon.png">
     <script>
         tailwind.config = {
@@ -86,6 +87,12 @@
         .explain-btn:hover { background: rgba(220, 38, 38, 0.2); }
         .explain-tooltip { animation: tooltipFade 0.2s ease; }
         @keyframes tooltipFade { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        
+        /* CTF Agent Styles */
+        .ctf-message pre { background: #0a0a0a; padding: 0.75rem; border-radius: 0.375rem; overflow-x: auto; margin: 0.5rem 0; }
+        .ctf-message code { font-family: 'Fira Code', monospace; font-size: 12px; }
+        .ctf-message li { list-style: disc; margin-left: 1rem; }
+        #ctf-messages { scroll-behavior: smooth; }
     </style>
 </head>
 <body class="bg-sp-black text-sp-white">
@@ -151,14 +158,14 @@
                             <span class="text-xs opacity-75 font-mono" x-text="selectedModel"></span>
                         </div>
                     </div>
-                    <select x-model="selectedProvider" @change="updateModels()" 
+                        <select x-model="selectedProvider" @change="updateModels(); savePreferences()" 
                             class="bg-sp-grey border border-sp-grey-mid rounded px-3 py-1.5 text-sm text-sp-white focus:border-sp-red focus:outline-none">
                         <option value="ollama-local">🦙 Local Ollama</option>
                         <option value="ollama-network">🌐 Networked Ollama</option>
                         <option value="openai">🤖 OpenAI</option>
                         <option value="anthropic">🧠 Anthropic</option>
                     </select>
-                    <select x-model="selectedModel" class="bg-sp-grey border border-sp-grey-mid rounded px-3 py-1.5 text-sm text-sp-white focus:border-sp-red focus:outline-none max-w-[200px]">
+                    <select x-model="selectedModel" @change="savePreferences()" class="bg-sp-grey border border-sp-grey-mid rounded px-3 py-1.5 text-sm text-sp-white focus:border-sp-red focus:outline-none max-w-[200px]">
                         <template x-for="model in availableModels" :key="model">
                             <option :value="model" x-text="model"></option>
                         </template>
@@ -236,6 +243,11 @@
                         class="px-4 py-2 font-medium transition border-b-2 flex items-center gap-2">
                     📝 Notes
                     <span x-show="projectNotes.length > 0" class="px-2 py-0.5 bg-sp-red/30 rounded-full text-xs" x-text="projectNotes.length"></span>
+                </button>
+                <button @click="activeTab = 'ctf'" 
+                        :class="activeTab === 'ctf' ? 'border-sp-red text-sp-red bg-sp-grey' : 'border-transparent text-sp-white-muted hover:text-white hover:bg-sp-grey-light'"
+                        class="px-4 py-2 font-medium transition border-b-2 flex items-center gap-2">
+                    🚩 CTF Agent
                 </button>
             </div>
         </header>
@@ -332,6 +344,9 @@
                         <p>• "Help with [topic]"</p>
                     </div>
                 </div>
+
+                <!-- Voice Controls Component Mount Point -->
+                <div id="voice-controls-mount" class="mt-4"></div>
             </aside>
 
             <!-- Help Chat Panel (Slide-in) -->
@@ -552,7 +567,7 @@
                     </div>
 
                     <div class="border-t border-sp-grey-mid p-4 bg-sp-dark">
-                        <form @submit.prevent="executeCommand()" class="flex gap-4">
+                        <form @submit.prevent="executeCommand()" class="flex gap-4 items-center">
                             <div class="flex items-center text-sp-red font-mono text-sm">
                                 kali@strikepackage:~$
                             </div>
@@ -574,6 +589,26 @@
                                     class="bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded font-semibold transition text-white">
                                 Cancel
                             </button>
+                            <button type="button"
+                                    @click="togglePause()"
+                                    :class="terminalPaused ? 'bg-blue-600 hover:bg-blue-700' : 'bg-sp-grey hover:bg-sp-grey-light'"
+                                    class="px-3 py-2 rounded text-white text-sm">
+                                <span x-text="terminalPaused ? 'Resume' : 'Pause'"></span>
+                            </button>
+                            <label class="flex items-center gap-2 text-xs text-sp-white-muted">
+                                <input type="checkbox" x-model="scrollLock"> Scroll Lock
+                            </label>
+                            <button type="button" @click="copyTerminalOutput()"
+                                    class="bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-white text-sm">
+                                Copy
+                            </button>
+                            <div class="ml-2 text-xs text-sp-white-muted" x-show="terminalStreaming">
+                                Elapsed: <span x-text="formatElapsed(terminalStartTime)"></span>
+                            </div>
+                            <div class="ml-2 text-xs" x-show="lastExitCode !== null">
+                                <span :class="lastExitCode === 0 ? 'bg-green-500/20 text-green-400 border border-green-500/40' : 'bg-sp-red/20 text-sp-red border border-sp-red/40'"
+                                      class="px-2 py-1 rounded">Exit: <span x-text="lastExitCode"></span></span>
+                            </div>
                         </form>
                         <p x-show="terminalStreaming" class="text-xs text-sp-white-muted mt-2">
                             💡 Output is streaming in real-time. Click Cancel to stop the command.
@@ -658,6 +693,15 @@
                             <p class="text-sm text-sp-white-muted">Discovered hosts with OS detection</p>
                         </div>
                         <div class="flex gap-3">
+                            <div class="flex items-center gap-2 bg-sp-grey px-2 py-1 rounded border border-sp-grey-mid">
+                                <span class="text-xs text-sp-white-muted">View:</span>
+                                <button @click="networkMapView = 'cytoscape'; $nextTick(() => renderNetworkMap())"
+                                        :class="networkMapView === 'cytoscape' ? 'bg-sp-red text-white' : 'bg-sp-grey-light text-sp-white-muted'"
+                                        class="px-2 py-1 rounded text-xs">Advanced</button>
+                                <button @click="networkMapView = 'd3'; $nextTick(() => renderNetworkMap())"
+                                        :class="networkMapView === 'd3' ? 'bg-sp-red text-white' : 'bg-sp-grey-light text-sp-white-muted'"
+                                        class="px-2 py-1 rounded text-xs">Classic</button>
+                            </div>
                             <button @click="showPipelineModal = true" 
                                     class="bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded text-sm transition flex items-center gap-2">
                                 🚀 Recon Pipeline
@@ -768,9 +812,10 @@
                         </div>
                     </div>
 
-                    <!-- Network Map SVG -->
+                    <!-- Network Map Containers -->
                     <div x-show="networkHosts.length > 0 && !networkMapLoading" class="flex-1 network-map-container relative">
-                        <svg id="networkMapSvg" class="w-full h-full"></svg>
+                        <div id="networkMapCytoscape" class="w-full h-full" x-show="networkMapView === 'cytoscape'"></div>
+                        <svg id="networkMapSvg" class="w-full h-full" x-show="networkMapView === 'd3'"></svg>
                     </div>
 
                     <!-- Host Details Panel -->
@@ -1457,6 +1502,202 @@
                             </div>
                         </div>
                     </template>
+                </div>
+
+                <!-- CTF Agent Tab -->
+                <div x-show="activeTab === 'ctf'" class="flex-1 flex flex-col overflow-hidden">
+                    <div class="p-4 border-b border-sp-grey-mid">
+                        <h2 class="text-lg font-bold text-sp-white flex items-center gap-2">
+                            🚩 CTF Agent
+                            <span class="text-sm font-normal text-sp-white-muted">AI-Powered Capture The Flag Assistant</span>
+                        </h2>
+                    </div>
+                    
+                    <div class="flex-1 flex overflow-hidden">
+                        <!-- Challenge Context Panel -->
+                        <div class="w-80 border-r border-sp-grey-mid p-4 overflow-y-auto bg-sp-dark">
+                            <h3 class="text-sm font-bold text-sp-red mb-3 flex items-center gap-2">
+                                🎯 Challenge Context
+                            </h3>
+                            
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-xs text-sp-white-muted mb-1">Category</label>
+                                    <select x-model="ctfAgent.category"
+                                            class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm text-sp-white focus:outline-none focus:ring-2 focus:ring-sp-red">
+                                        <option value="general">🎮 General</option>
+                                        <option value="web">🌐 Web Exploitation</option>
+                                        <option value="crypto">🔐 Cryptography</option>
+                                        <option value="pwn">💥 Binary Exploitation (PWN)</option>
+                                        <option value="reversing">🔍 Reverse Engineering</option>
+                                        <option value="forensics">🔬 Forensics</option>
+                                        <option value="osint">🕵️ OSINT</option>
+                                        <option value="misc">🎲 Miscellaneous</option>
+                                    </select>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-xs text-sp-white-muted mb-1">Challenge Name</label>
+                                    <input type="text" x-model="ctfAgent.challengeName" 
+                                           placeholder="e.g., Baby SQLi, Easy RSA"
+                                           class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm text-sp-white placeholder-sp-white-muted focus:outline-none focus:ring-2 focus:ring-sp-red">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-xs text-sp-white-muted mb-1">Challenge Description</label>
+                                    <textarea x-model="ctfAgent.challengeDescription" 
+                                              rows="3"
+                                              placeholder="Paste the challenge description here..."
+                                              class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm text-sp-white placeholder-sp-white-muted focus:outline-none focus:ring-2 focus:ring-sp-red resize-none"></textarea>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-xs text-sp-white-muted mb-1">Hints (one per line)</label>
+                                    <textarea x-model="ctfAgent.hintsText" 
+                                              rows="2"
+                                              placeholder="Any hints provided..."
+                                              class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm text-sp-white placeholder-sp-white-muted focus:outline-none focus:ring-2 focus:ring-sp-red resize-none"></textarea>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-xs text-sp-white-muted mb-1">Files/Attachments</label>
+                                    <textarea x-model="ctfAgent.filesText" 
+                                              rows="2"
+                                              placeholder="challenge.zip, flag.enc, binary..."
+                                              class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm text-sp-white placeholder-sp-white-muted focus:outline-none focus:ring-2 focus:ring-sp-red resize-none font-mono"></textarea>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-xs text-sp-white-muted mb-1">Current Progress</label>
+                                    <textarea x-model="ctfAgent.currentProgress" 
+                                              rows="3"
+                                              placeholder="What have you tried? What did you find?"
+                                              class="w-full bg-sp-grey border border-sp-grey-mid rounded px-3 py-2 text-sm text-sp-white placeholder-sp-white-muted focus:outline-none focus:ring-2 focus:ring-sp-red resize-none"></textarea>
+                                </div>
+                                
+                                <button @click="clearCtfContext()"
+                                        class="w-full bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-sm transition border border-sp-grey-mid">
+                                    🗑️ Clear Context
+                                </button>
+                            </div>
+                            
+                            <!-- Quick Actions -->
+                            <h3 class="text-sm font-bold text-sp-red mt-6 mb-3 flex items-center gap-2">
+                                ⚡ Quick Prompts
+                            </h3>
+                            <div class="space-y-2">
+                                <button @click="sendCtfQuickPrompt('Analyze this challenge and suggest initial approach vectors')"
+                                        class="w-full text-left bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-xs transition border border-sp-grey-mid text-sp-white-dim">
+                                    🎯 Initial Analysis
+                                </button>
+                                <button @click="sendCtfQuickPrompt('What tools should I use for this type of challenge?')"
+                                        class="w-full text-left bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-xs transition border border-sp-grey-mid text-sp-white-dim">
+                                    🛠️ Recommend Tools
+                                </button>
+                                <button @click="sendCtfQuickPrompt('I am stuck. Give me a hint without revealing the solution')"
+                                        class="w-full text-left bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-xs transition border border-sp-grey-mid text-sp-white-dim">
+                                    💡 Give Me a Hint
+                                </button>
+                                <button @click="sendCtfQuickPrompt('Explain the vulnerability or technique used in this challenge')"
+                                        class="w-full text-left bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-xs transition border border-sp-grey-mid text-sp-white-dim">
+                                    📚 Explain Technique
+                                </button>
+                                <button @click="sendCtfQuickPrompt('Write a solve script or exploit for this challenge')"
+                                        class="w-full text-left bg-sp-grey hover:bg-sp-grey-light px-3 py-2 rounded text-xs transition border border-sp-grey-mid text-sp-white-dim">
+                                    🐍 Generate Solve Script
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Chat Area -->
+                        <div class="flex-1 flex flex-col bg-sp-black/50">
+                            <!-- Category Badge -->
+                            <div class="px-4 py-2 border-b border-sp-grey-mid bg-sp-dark/50 flex items-center gap-2">
+                                <span :class="{
+                                    'bg-gray-500/30 text-gray-400': ctfAgent.category === 'general',
+                                    'bg-blue-500/30 text-blue-400': ctfAgent.category === 'web',
+                                    'bg-purple-500/30 text-purple-400': ctfAgent.category === 'crypto',
+                                    'bg-red-500/30 text-red-400': ctfAgent.category === 'pwn',
+                                    'bg-orange-500/30 text-orange-400': ctfAgent.category === 'reversing',
+                                    'bg-green-500/30 text-green-400': ctfAgent.category === 'forensics',
+                                    'bg-cyan-500/30 text-cyan-400': ctfAgent.category === 'osint',
+                                    'bg-yellow-500/30 text-yellow-400': ctfAgent.category === 'misc'
+                                }" class="px-2 py-1 rounded text-xs font-semibold">
+                                    <span x-text="getCategoryLabel(ctfAgent.category)"></span>
+                                </span>
+                                <span x-show="ctfAgent.challengeName" class="text-sm text-sp-white-muted">
+                                    Challenge: <span class="text-sp-white" x-text="ctfAgent.challengeName"></span>
+                                </span>
+                            </div>
+                            
+                            <!-- Messages -->
+                            <div class="flex-1 overflow-y-auto p-4 space-y-4" id="ctf-messages">
+                                <template x-if="ctfAgent.messages.length === 0">
+                                    <div class="flex items-center justify-center h-full text-center">
+                                        <div>
+                                            <p class="text-6xl mb-4">🚩</p>
+                                            <p class="text-sp-white text-lg font-semibold">CTF Agent Ready</p>
+                                            <p class="text-sp-white-muted text-sm mt-2 max-w-md">
+                                                I'm your AI-powered CTF assistant. Set your challenge context on the left, 
+                                                then ask me anything about solving CTF challenges!
+                                            </p>
+                                            <div class="mt-4 grid grid-cols-2 gap-2 text-xs">
+                                                <div class="bg-sp-grey/50 px-3 py-2 rounded border border-sp-grey-mid">🌐 Web Exploitation</div>
+                                                <div class="bg-sp-grey/50 px-3 py-2 rounded border border-sp-grey-mid">🔐 Cryptography</div>
+                                                <div class="bg-sp-grey/50 px-3 py-2 rounded border border-sp-grey-mid">💥 Binary PWN</div>
+                                                <div class="bg-sp-grey/50 px-3 py-2 rounded border border-sp-grey-mid">🔍 Reverse Engineering</div>
+                                                <div class="bg-sp-grey/50 px-3 py-2 rounded border border-sp-grey-mid">🔬 Forensics</div>
+                                                <div class="bg-sp-grey/50 px-3 py-2 rounded border border-sp-grey-mid">🕵️ OSINT</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                                
+                                <template x-for="(msg, idx) in ctfAgent.messages" :key="idx">
+                                    <div :class="msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'">
+                                        <div :class="msg.role === 'user' ? 'bg-sp-red/20 border-sp-red/50' : 'bg-sp-grey border-sp-grey-mid'" 
+                                             class="max-w-3xl px-4 py-3 rounded-lg border">
+                                            <div class="flex items-center gap-2 mb-1 text-xs text-sp-white-muted">
+                                                <span x-text="msg.role === 'user' ? '👤 You' : '🚩 CTF Agent'"></span>
+                                                <span x-text="msg.timestamp"></span>
+                                            </div>
+                                            <div class="text-sm text-sp-white prose prose-invert max-w-none ctf-message" x-html="formatCtfMessage(msg.content)"></div>
+                                        </div>
+                                    </div>
+                                </template>
+                                
+                                <div x-show="ctfAgent.loading" class="flex justify-start">
+                                    <div class="bg-sp-grey border border-sp-grey-mid px-4 py-3 rounded-lg">
+                                        <div class="flex items-center gap-2">
+                                            <div class="animate-pulse flex gap-1">
+                                                <div class="w-2 h-2 bg-sp-red rounded-full animate-bounce"></div>
+                                                <div class="w-2 h-2 bg-sp-red rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+                                                <div class="w-2 h-2 bg-sp-red rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                                            </div>
+                                            <span class="text-sm text-sp-white-muted">CTF Agent is thinking...</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Input Area -->
+                            <div class="p-4 border-t border-sp-grey-mid bg-sp-dark">
+                                <div class="flex gap-2">
+                                    <textarea x-model="ctfAgent.input" 
+                                              @keydown.enter.prevent="if(!$event.shiftKey) sendCtfMessage()"
+                                              rows="2"
+                                              placeholder="Ask about your CTF challenge... (Enter to send, Shift+Enter for newline)"
+                                              class="flex-1 bg-sp-grey border border-sp-grey-mid rounded-lg px-4 py-3 text-sp-white placeholder-sp-white-muted focus:outline-none focus:ring-2 focus:ring-sp-red resize-none"></textarea>
+                                    <button @click="sendCtfMessage()"
+                                            :disabled="!ctfAgent.input.trim() || ctfAgent.loading"
+                                            class="bg-sp-red hover:bg-sp-red-dark disabled:opacity-50 disabled:cursor-not-allowed px-6 py-2 rounded-lg font-semibold transition flex items-center gap-2">
+                                        <span x-show="!ctfAgent.loading">Send</span>
+                                        <span x-show="ctfAgent.loading" class="animate-spin">⟳</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </main>
         </div>
@@ -2291,6 +2532,11 @@
                 terminalLoading: false,
                 terminalWs: null,
                 terminalStreaming: false,
+                terminalPaused: false,
+                pausedBuffer: [],
+                scrollLock: false,
+                terminalStartTime: null,
+                lastExitCode: null,
                 commandHistory: [],
                 historyIndex: -1,
                 scans: [],
@@ -2305,6 +2551,7 @@
                 networkHosts: [],
                 selectedHost: null,
                 networkMapLoading: false,
+                networkMapView: 'cytoscape',
                 osFilters: [],  // Active OS type filters for network map
                 networkScanProgress: { current: 0, total: 0, currentIp: '', hostsFound: 0 },
                 showRangeScanModal: false,
@@ -2368,6 +2615,7 @@
 
                 // Onboarding State
                 showOnboarding: !localStorage.getItem('goosestrike-onboarded'),
+                onboardingComplete: localStorage.getItem('goosestrike-onboarded') === 'true',
 
                 // Project Management State
                 projects: [],
@@ -2419,6 +2667,19 @@
                     pipeline: 'standard',
                     include_vuln_scan: false,
                     include_web_enum: false
+                },
+                
+                // CTF Agent State
+                ctfAgent: {
+                    category: 'general',
+                    challengeName: '',
+                    challengeDescription: '',
+                    hintsText: '',
+                    filesText: '',
+                    currentProgress: '',
+                    messages: [],
+                    input: '',
+                    loading: false
                 },
 
                 phases: [
@@ -2519,11 +2780,41 @@
 
                 async init() {
                     await this.checkStatus();
-                    await this.checkRunningProcesses();
+                    // Load saved preferences (provider/model)
+                    try {
+                        const prefRes = await fetch('/api/preferences');
+                        const pref = await prefRes.json();
+                        if (pref.provider) this.selectedProvider = pref.provider;
+                        if (pref.model) this.selectedModel = pref.model;
+                    } catch {}
+
+                    // Subscribe to SSE for running processes via dashboard proxy
+                    try {
+                        const es = new EventSource('/api/stream/processes');
+                        es.onmessage = (ev) => {
+                            try {
+                                const data = JSON.parse(ev.data);
+                                this.runningProcesses = data.running_processes || [];
+                            } catch {}
+                        };
+                        es.onerror = () => { /* keep trying */ };
+                    } catch {}
+
+                    // Mount React components if available
+                    if (window.GooseStrikeComponents) {
+                        // Mount voice controls if container exists
+                        const voiceContainer = document.getElementById('voice-controls-mount');
+                        if (voiceContainer) {
+                            window.GooseStrikeComponents.mount.voiceControls('voice-controls-mount', {
+                                onCommand: (cmd) => this.handleVoiceCommand(cmd),
+                                apiUrl: '/api/voice'
+                            });
+                        }
+                    }
+
                     await this.loadProjects();  // Load projects on init
                     await this.loadActivePipelines();  // Load active pipelines
                     setInterval(() => this.checkStatus(), 30000);
-                    setInterval(() => this.checkRunningProcesses(), 5000);
                     await this.loadProviders();
                     await this.refreshScans();
                     setInterval(() => this.pollRunningScans(), 5000);
@@ -2925,6 +3216,106 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                 },
                 // ============= END RECON PIPELINE =============
 
+                // ============= CTF AGENT METHODS =============
+                getCategoryLabel(category) {
+                    const labels = {
+                        'general': '🎮 General',
+                        'web': '🌐 Web Exploitation',
+                        'crypto': '🔐 Cryptography',
+                        'pwn': '💥 Binary PWN',
+                        'reversing': '🔍 Reverse Engineering',
+                        'forensics': '🔬 Forensics',
+                        'osint': '🕵️ OSINT',
+                        'misc': '🎲 Miscellaneous'
+                    };
+                    return labels[category] || labels['general'];
+                },
+
+                clearCtfContext() {
+                    this.ctfAgent.challengeName = '';
+                    this.ctfAgent.challengeDescription = '';
+                    this.ctfAgent.hintsText = '';
+                    this.ctfAgent.filesText = '';
+                    this.ctfAgent.currentProgress = '';
+                    this.ctfAgent.messages = [];
+                },
+
+                formatCtfMessage(content) {
+                    // Convert markdown-like syntax to HTML
+                    let formatted = content
+                        // Code blocks
+                        .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-sp-black p-3 rounded my-2 overflow-x-auto text-green-400 font-mono text-xs border border-sp-grey"><code>$2</code></pre>')
+                        // Inline code
+                        .replace(/`([^`]+)`/g, '<code class="bg-sp-black px-1 rounded text-green-400 font-mono">$1</code>')
+                        // Bold
+                        .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-sp-red">$1</strong>')
+                        // Line breaks
+                        .replace(/\n/g, '<br>')
+                        // Lists
+                        .replace(/^- (.*)/gm, '<li class="ml-4">$1</li>');
+                    return formatted;
+                },
+
+                async sendCtfMessage() {
+                    if (!this.ctfAgent.input.trim() || this.ctfAgent.loading) return;
+                    
+                    const userMessage = this.ctfAgent.input.trim();
+                    this.ctfAgent.input = '';
+                    
+                    // Add user message to chat
+                    this.ctfAgent.messages.push({
+                        role: 'user',
+                        content: userMessage,
+                        timestamp: new Date().toLocaleTimeString()
+                    });
+                    
+                    this.ctfAgent.loading = true;
+                    this.scrollToBottom('ctf-messages');
+                    
+                    try {
+                        const hints = this.ctfAgent.hintsText.split('\n').filter(h => h.trim());
+                        const files = this.ctfAgent.filesText.split(/[\n,]/).filter(f => f.trim());
+                        
+                        const response = await fetch('/api/ctf/agent', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                message: userMessage,
+                                category: this.ctfAgent.category,
+                                challenge_name: this.ctfAgent.challengeName || null,
+                                challenge_description: this.ctfAgent.challengeDescription || null,
+                                hints: hints,
+                                files: files,
+                                current_progress: this.ctfAgent.currentProgress || null
+                            })
+                        });
+                        
+                        const data = await response.json();
+                        
+                        this.ctfAgent.messages.push({
+                            role: 'assistant',
+                            content: data.response || 'I encountered an error processing your request.',
+                            timestamp: new Date().toLocaleTimeString()
+                        });
+                    } catch (e) {
+                        console.error('CTF Agent error:', e);
+                        this.ctfAgent.messages.push({
+                            role: 'assistant',
+                            content: '❌ Failed to connect to CTF Agent. Please check the backend service.',
+                            timestamp: new Date().toLocaleTimeString()
+                        });
+                    }
+                    
+                    this.ctfAgent.loading = false;
+                    this.$nextTick(() => this.scrollToBottom('ctf-messages'));
+                },
+
+                sendCtfQuickPrompt(prompt) {
+                    this.ctfAgent.input = prompt;
+                    this.sendCtfMessage();
+                },
+                // ============= END CTF AGENT =============
+
                 // ============= END PROJECT MANAGEMENT =============
 
                 async loadProviders() {
@@ -2939,6 +3330,38 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                     if (this.providers[this.selectedProvider]) {
                         this.availableModels = this.providers[this.selectedProvider].models || [];
                         this.selectedModel = this.availableModels[0] || '';
+                    }
+                },
+
+                savePreferences() {
+                    // Persist provider/model selection (global)
+                    fetch('/api/preferences', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ provider: this.selectedProvider, model: this.selectedModel })
+                    }).catch(() => {});
+                },
+
+                handleVoiceCommand(command) {
+                    // Process voice command - route to appropriate handler
+                    const lower = command.toLowerCase();
+                    if (lower.includes('scan')) {
+                        this.scanModalOpen = true;
+                        // Extract target if present
+                        const match = lower.match(/scan\s+([^\s]+)/);
+                        if (match) this.scanModal.target = match[1];
+                    } else if (lower.includes('show') && lower.includes('agent')) {
+                        this.activeTab = 'c2';
+                    } else if (lower.includes('list') && lower.includes('scan')) {
+                        this.activeTab = 'scan-history';
+                    } else if (lower.includes('help')) {
+                        this.showHelpPanel = true;
+                        this.helpInput = command;
+                        this.sendHelpMessage();
+                    } else {
+                        // Default: send to chat
+                        this.userInput = command;
+                        this.sendMessage();
                     }
                 },
 
@@ -2997,6 +3420,10 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                     this.terminalHistory.push({ type: 'cmd', content: command });
                     this.terminalLoading = true;
                     this.terminalStreaming = true;
+                    this.terminalPaused = false;
+                    this.pausedBuffer = [];
+                    this.terminalStartTime = Date.now();
+                    this.lastExitCode = null;
                     this.scrollToBottom('terminalOutput');
                     
                     // Use WebSocket for real-time streaming
@@ -3019,6 +3446,12 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                         ws.onmessage = function(event) {
                             console.log('WebSocket message:', event.data);
                             const data = JSON.parse(event.data);
+                            
+                            // Buffer messages while paused
+                            if (self.terminalPaused) {
+                                self.pausedBuffer.push(data);
+                                return;
+                            }
                             
                             if (data.type === 'stdout' && data.data) {
                                 // Append to last stdout or create new one for continuous output
@@ -3050,6 +3483,7 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                                 if (data.exit_code !== 0) {
                                     self.terminalHistory.push({ type: 'info', content: `Exit code: ${data.exit_code}` });
                                 }
+                                self.lastExitCode = (typeof data.exit_code === 'number') ? data.exit_code : self.lastExitCode;
                                 self.terminalLoading = false;
                                 self.terminalStreaming = false;
                                 ws.close();
@@ -3115,6 +3549,59 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                         this.terminalStreaming = false;
                         this.terminalLoading = false;
                         this.terminalHistory.push({ type: 'info', content: '[Command cancelled]' });
+                    }
+                },
+
+                togglePause() {
+                    this.terminalPaused = !this.terminalPaused;
+                    if (!this.terminalPaused && this.pausedBuffer.length) {
+                        // Flush buffered messages
+                        for (const data of this.pausedBuffer) {
+                            if (data.type === 'stdout' && data.data) {
+                                const lastEntry = this.terminalHistory[this.terminalHistory.length - 1];
+                                if (lastEntry && lastEntry.type === 'stdout') {
+                                    lastEntry.content += data.data;
+                                } else {
+                                    this.terminalHistory.push({ type: 'stdout', content: data.data });
+                                }
+                            } else if (data.type === 'stderr' && data.data) {
+                                this.terminalHistory.push({ type: 'stderr', content: data.data });
+                            } else if (data.type === 'keepalive') {
+                                const lastEntry = this.terminalHistory[this.terminalHistory.length - 1];
+                                if (lastEntry && lastEntry.type === 'keepalive') {
+                                    lastEntry.content = data.message || `Scan in progress (${data.elapsed}s)...`;
+                                } else {
+                                    this.terminalHistory.push({ type: 'keepalive', content: data.message || 'Scan in progress...' });
+                                }
+                            } else if (data.type === 'complete') {
+                                const lastEntry = this.terminalHistory[this.terminalHistory.length - 1];
+                                if (lastEntry && lastEntry.type === 'keepalive') {
+                                    this.terminalHistory.pop();
+                                }
+                                if (data.exit_code !== 0) {
+                                    this.terminalHistory.push({ type: 'info', content: `Exit code: ${data.exit_code}` });
+                                }
+                                this.lastExitCode = (typeof data.exit_code === 'number') ? data.exit_code : this.lastExitCode;
+                                this.terminalLoading = false;
+                                this.terminalStreaming = false;
+                            }
+                        }
+                        this.pausedBuffer = [];
+                        this.scrollToBottom('terminalOutput');
+                    }
+                },
+
+                copyTerminalOutput() {
+                    try {
+                        const text = this.terminalHistory
+                            .filter(l => l.type === 'stdout' || l.type === 'stderr' || l.type === 'cmd')
+                            .map(l => (l.type === 'cmd' ? `$ ${l.content}` : l.content))
+                            .join('\n');
+                        navigator.clipboard.writeText(text);
+                        this.terminalHistory.push({ type: 'info', content: '[Output copied to clipboard]' });
+                        this.scrollToBottom('terminalOutput');
+                    } catch (e) {
+                        this.terminalHistory.push({ type: 'stderr', content: 'Failed to copy output' });
                     }
                 },
 
@@ -3384,10 +3871,18 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                 renderMarkdown(content) { return marked.parse(content || ''); },
 
                 scrollToBottom(containerId) {
+                    if (this.scrollLock) return;
                     this.$nextTick(() => {
                         const container = document.getElementById(containerId);
                         if (container) container.scrollTop = container.scrollHeight;
                     });
+                },
+                formatElapsed(startTs) {
+                    if (!startTs) return '0s';
+                    const secs = Math.floor((Date.now() - startTs) / 1000);
+                    if (secs < 60) return `${secs}s`;
+                    const m = Math.floor(secs / 60), s = secs % 60;
+                    return `${m}m ${s}s`;
                 },
 
                 // Network Map Functions
@@ -3545,6 +4040,36 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                 },
 
                 renderNetworkMap() {
+                    // Switch between Cytoscape and D3 views
+                    if (this.networkMapView === 'cytoscape' && window.GooseStrikeComponents && window.GooseStrikeComponents.mount && window.GooseStrikeComponents.mount.networkMap) {
+                        this.renderNetworkMapCytoscape();
+                        return;
+                    }
+                    // Fallback to D3
+                    this.renderNetworkMapD3();
+                },
+
+                renderNetworkMapCytoscape() {
+                    const containerId = 'networkMapCytoscape';
+                    // Apply OS filters
+                    let filteredHosts = this.networkHosts;
+                    if (this.osFilters.length > 0) {
+                        filteredHosts = this.networkHosts.filter(host => {
+                            const category = this.getOsCategory(host.os_type);
+                            return this.osFilters.includes(category);
+                        });
+                    }
+                    window.GooseStrikeComponents.mount.networkMap(containerId, {
+                        hosts: filteredHosts,
+                        onSelect: (hostIp) => {
+                            const host = this.networkHosts.find(h => h.ip === hostIp);
+                            if (host) this.selectHost(host);
+                        },
+                        filters: { os: this.osFilters }
+                    });
+                },
+
+                renderNetworkMapD3() {
                     const svg = d3.select('#networkMapSvg');
                     svg.selectAll('*').remove();
                     
@@ -3999,6 +4524,26 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                     }
                 },
 
+                // Alias methods for voice control buttons
+                toggleVoiceRecording() {
+                    this.toggleVoice();
+                },
+
+                startVoiceRecording() {
+                    if (!this.voiceSupported) return;
+                    if (!this.speechRecognition) this.initVoice();
+                    if (this.voiceState === 'idle') {
+                        this.speechRecognition.start();
+                    }
+                },
+
+                stopVoiceRecording() {
+                    if (this.speechRecognition && this.voiceState === 'listening') {
+                        this.speechRecognition.stop();
+                        this.voiceState = 'idle';
+                    }
+                },
+
                 async processVoiceCommand(transcript) {
                     this.voiceState = 'processing';
                     this.terminalHistory.push({ type: 'info', content: `[Voice] Heard: "${transcript}"` });
@@ -4162,6 +4707,109 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                                     tips: ['Supports multiple listener types', 'Generate reverse shells quickly', 'Task agents with commands']
                                 }
                             ]
+                        },
+                        'first_time_setup': {
+                            title: '🚀 First Time Setup',
+                            steps: [
+                                {
+                                    title: 'Welcome to GooseStrike!',
+                                    description: 'Let\'s get you set up with your first penetration testing project.',
+                                    fields: [
+                                        { name: 'projectName', label: 'Project Name', type: 'text', placeholder: 'My First Pentest' }
+                                    ],
+                                    tips: ['Projects help organize your findings', 'All data is saved per-project']
+                                },
+                                {
+                                    title: 'Configure Your Target',
+                                    description: 'Enter the target you have authorization to test.',
+                                    fields: [
+                                        { name: 'target', label: 'Target IP/Hostname', type: 'text', placeholder: '10.10.10.1 or target.htb' },
+                                        { name: 'scope', label: 'Scope Type', type: 'select', options: [
+                                            { value: 'single', label: 'Single Host' },
+                                            { value: 'network', label: 'Network Range' },
+                                            { value: 'webapp', label: 'Web Application' }
+                                        ]}
+                                    ],
+                                    tips: ['⚠️ Only test systems you own or have explicit permission to test']
+                                },
+                                {
+                                    title: 'You\'re All Set!',
+                                    description: 'GooseStrike is ready. Here\'s how to get started:',
+                                    fields: [],
+                                    tips: ['Use the AI Chat to ask questions', 'Terminal tab runs commands in Kali', 'Network tab shows discovered hosts', 'Check the CTF Agent tab for capture-the-flag help']
+                                }
+                            ]
+                        },
+                        'run_scan': {
+                            title: '🔍 Scan Wizard',
+                            steps: [
+                                {
+                                    title: 'Select Scan Type',
+                                    description: 'Choose the type of scan to run.',
+                                    fields: [
+                                        { name: 'scanType', label: 'Scan Type', type: 'select', options: [
+                                            { value: 'quick', label: 'Quick Scan (Top 100 ports)' },
+                                            { value: 'full', label: 'Full Port Scan (All 65535)' },
+                                            { value: 'service', label: 'Service Version Detection' },
+                                            { value: 'vuln', label: 'Vulnerability Scan' },
+                                            { value: 'stealth', label: 'Stealth Scan (SYN)' }
+                                        ]}
+                                    ],
+                                    tips: ['Quick scans are faster but may miss ports', 'Service detection helps identify exploits']
+                                },
+                                {
+                                    title: 'Enter Target',
+                                    description: 'Specify what to scan.',
+                                    fields: [
+                                        { name: 'target', label: 'Target', type: 'text', placeholder: '10.10.10.1 or 10.10.10.0/24' },
+                                        { name: 'ports', label: 'Specific Ports (optional)', type: 'text', placeholder: '22,80,443,8080' }
+                                    ],
+                                    tips: ['CIDR notation for network ranges', 'Leave ports blank for default']
+                                },
+                                {
+                                    title: 'Ready to Scan',
+                                    description: 'Review and start your scan.',
+                                    fields: [],
+                                    tips: ['Results appear in the Network tab', 'Click hosts to see details and exploits']
+                                }
+                            ]
+                        },
+                        'create_operation': {
+                            title: '📋 New Operation',
+                            steps: [
+                                {
+                                    title: 'Operation Details',
+                                    description: 'Set up your new operation/engagement.',
+                                    fields: [
+                                        { name: 'name', label: 'Operation Name', type: 'text', placeholder: 'Operation Thunderstrike' },
+                                        { name: 'client', label: 'Client/Target Org', type: 'text', placeholder: 'ACME Corp' }
+                                    ],
+                                    tips: ['Use codenames for operational security']
+                                },
+                                {
+                                    title: 'Scope & Rules',
+                                    description: 'Define the engagement scope.',
+                                    fields: [
+                                        { name: 'inScope', label: 'In-Scope Targets', type: 'textarea', placeholder: '10.10.10.0/24\nweb.target.com' },
+                                        { name: 'outOfScope', label: 'Out-of-Scope', type: 'textarea', placeholder: 'production.target.com\n10.10.20.0/24' }
+                                    ],
+                                    tips: ['Document scope clearly', 'Stay within authorized boundaries']
+                                },
+                                {
+                                    title: 'Timeline',
+                                    description: 'Set operation timeline.',
+                                    fields: [
+                                        { name: 'startDate', label: 'Start Date', type: 'text', placeholder: 'YYYY-MM-DD' },
+                                        { name: 'endDate', label: 'End Date', type: 'text', placeholder: 'YYYY-MM-DD' },
+                                        { name: 'testingWindow', label: 'Testing Window', type: 'select', options: [
+                                            { value: '24x7', label: '24/7 Testing Allowed' },
+                                            { value: 'business', label: 'Business Hours Only' },
+                                            { value: 'offhours', label: 'Off-Hours Only' }
+                                        ]}
+                                    ],
+                                    tips: ['Respect testing windows', 'Coordinate with client']
+                                }
+                            ]
                         }
                     };
                     
@@ -4174,13 +4822,43 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                 completeWizard() {
                     this.showWizardModal = false;
                     
-                    if (this.wizardType === 'first_time' || this.wizardType === 'mission_planning') {
+                    if (this.wizardType === 'first_time' || this.wizardType === 'mission_planning' || this.wizardType === 'first_time_setup') {
                         // Apply wizard configuration
                         if (this.wizardData.target) {
                             this.userInput = `Start reconnaissance on ${this.wizardData.target}`;
                             this.sendMessage();
                         }
-                        this.terminalHistory.push({ type: 'success', content: `[Wizard] Mission configured: ${this.wizardData.name || 'New Mission'}` });
+                        if (this.wizardData.projectName) {
+                            this.terminalHistory.push({ type: 'success', content: `[Wizard] Project "${this.wizardData.projectName}" configured` });
+                        } else {
+                            this.terminalHistory.push({ type: 'success', content: `[Wizard] Mission configured: ${this.wizardData.name || 'New Mission'}` });
+                        }
+                    } else if (this.wizardType === 'run_scan') {
+                        // Execute scan based on wizard data
+                        if (this.wizardData.target) {
+                            const scanTypes = {
+                                'quick': '-sT --top-ports 100',
+                                'full': '-sT -p-',
+                                'service': '-sV',
+                                'vuln': '-sV --script vuln',
+                                'stealth': '-sS'
+                            };
+                            const scanArgs = scanTypes[this.wizardData.scanType] || '-sT';
+                            const ports = this.wizardData.ports ? `-p ${this.wizardData.ports}` : '';
+                            const cmd = `nmap ${scanArgs} ${ports} ${this.wizardData.target}`;
+                            this.terminalInput = cmd;
+                            this.executeCommand();
+                            this.terminalHistory.push({ type: 'success', content: `[Wizard] Scan started: ${this.wizardData.scanType}` });
+                        }
+                    } else if (this.wizardType === 'create_operation') {
+                        // Create operation/project
+                        if (this.wizardData.name) {
+                            this.newProject.name = this.wizardData.name;
+                            this.newProject.description = `Client: ${this.wizardData.client || 'N/A'}\nIn-scope: ${this.wizardData.inScope || ''}\nOut-of-scope: ${this.wizardData.outOfScope || ''}`;
+                            this.newProject.target_network = this.wizardData.inScope?.split('\n')[0] || '';
+                            this.showProjectModal = true;
+                            this.terminalHistory.push({ type: 'success', content: `[Wizard] Operation "${this.wizardData.name}" template ready` });
+                        }
                     }
                     
                     this.wizardData = {};
@@ -4290,6 +4968,35 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                 // ==========================================
                 // Help Panel Functions
                 // ==========================================
+                toggleHelpPanel() {
+                    this.showHelpPanel = !this.showHelpPanel;
+                    if (this.showHelpPanel && this.helpMessages.length === 0) {
+                        // Add welcome message
+                        this.helpMessages.push({
+                            role: 'assistant',
+                            content: `👋 **Welcome to GooseStrike Help!**
+
+I can help you with:
+- 🔍 **Scanning** - Network reconnaissance, port scanning, service detection
+- 💉 **Exploitation** - Using exploits, payload generation
+- 📡 **C2** - Setting up listeners, managing agents
+- 📝 **Reporting** - Documenting findings
+- 🛠️ **Tools** - Any Kali Linux tool questions
+
+Just ask your question below!`,
+                            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        });
+                    }
+                },
+
+                showWizard(wizardType) {
+                    this.wizardType = wizardType;
+                    this.wizardStep = 1;
+                    this.wizardData = {};
+                    this.showWizardModal = true;
+                    this.startWizard(wizardType);
+                },
+
                 async sendHelpMessage() {
                     if (!this.helpInput.trim()) return;
                     
@@ -4346,6 +5053,27 @@ Select a phase above to begin, or use the quick actions in the sidebar!`
                 askHelpQuestion(question) {
                     this.helpInput = question;
                     this.sendHelpMessage();
+                },
+
+                // Alias for quick help buttons
+                askHelp(question) {
+                    this.showHelpPanel = true;
+                    this.$nextTick(() => {
+                        this.helpInput = question;
+                        this.sendHelpMessage();
+                    });
+                },
+
+                // Wrapper for explain input functionality
+                explainInput() {
+                    if (this.userInput.trim()) {
+                        this.explainThis('command', { command: this.userInput.trim() });
+                    } else {
+                        this.terminalHistory.push({
+                            type: 'info',
+                            content: 'Type a command or select text to explain'
+                        });
+                    }
                 },
 
                 getLocalHelp(question) {
